@@ -1,0 +1,11 @@
+.env
+*.tmp
+*.json
+*.gz
+*.zip
+*.log
+*.tmp
+*.jsonL
+*.pyc
+*.jsonl
+unified_records.jsonl

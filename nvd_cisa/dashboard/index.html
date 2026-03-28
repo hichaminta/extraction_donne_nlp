@@ -1,0 +1,186 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTI Threat Intelligence Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🛡️</span>
+                <span class="logo-text">CTI Dash</span>
+            </div>
+            <nav class="nav-links">
+                <a href="#" class="nav-item active" data-view="overview">
+                    <span class="icon">📊</span> Overview
+                </a>
+                <a href="#" class="nav-item" data-view="threats">
+                    <span class="icon">⚠️</span> Threat List
+                </a>
+                <a href="#" class="nav-item" data-view="analytics">
+                    <span class="icon">📈</span> Analytics
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <p>Version 1.0.0</p>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="page-title">
+                    <h2>Tableau de bord</h2>
+                    <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;">Vision globale des
+                        menaces et vulnérabilités</p>
+                </div>
+                <!-- Action Bar with Details -->
+                <div class="user-profile" style="display:flex; align-items:center; gap:1rem;">
+                    <span class="last-updated">Mis à jour : <span id="update-time">Chargement...</span></span>
+                </div>
+            </header>
+
+            <div class="filters-container"
+                style="display:flex; flex-wrap:wrap; gap:1rem; padding: 1rem 2rem; background: var(--bg-card); border-bottom: 1px solid var(--border-color);">
+                <div class="search-container" style="flex: 1; min-width: 250px; margin: 0;">
+                    <input type="text" id="global-search" placeholder="Rechercher CVE, description, ou CISA..."
+                        style="width: 100%; border-radius: 6px; padding: 0.5rem 1rem; border: 1px solid var(--border-color);">
+                </div>
+
+                <select id="severity-filter"
+                    style="padding: 0.5rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--border-color);">
+                    <option value="">Toutes sévérités</option>
+                    <option value="CRITICAL">CRITICAL (9.0+)</option>
+                    <option value="HIGH">HIGH (7.0-8.9)</option>
+                    <option value="MEDIUM">MEDIUM (4.0-6.9)</option>
+                    <option value="LOW">LOW (0.1-3.9)</option>
+                </select>
+
+                <select id="year-filter"
+                    style="padding: 0.5rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--border-color);">
+                    <option value="">Toutes les années</option>
+                    <option value="2025">2025</option>
+                    <option value="2024">2024</option>
+                    <option value="2023">2023</option>
+                    <option value="2022">2022</option>
+                    <option value="2021">2021</option>
+                    <option value="2020">2020</option>
+                    <option value="2019">2019</option>
+                    <option value="2018">2018</option>
+                    <option value="2017">2017</option>
+                    <option value="2016">2016</option>
+                    <option value="2015">2015</option>
+                    <option value="2014">2014</option>
+                    <option value="2013">2013</option>
+                    <option value="2012">2012</option>
+                    <option value="2011">2011</option>
+                    <option value="2010">2010</option>
+                    <option value="2009">2009</option>
+                    <option value="2008">2008</option>
+                    <option value="2007">2007</option>
+                    <option value="2006">2006</option>
+                    <option value="2005">2005</option>
+                    <option value="2004">2004</option>
+                    <option value="2003">2003</option>
+                    <option value="2002">2002</option>
+                    <option value="2001">2001</option>
+                    <option value="2000">2000</option>
+                    <option value="1999">1999</option>
+                    <option value="1998">1998</option>
+                </select>
+
+                <select id="cvss-version-filter"
+                    style="padding: 0.5rem; border-radius: 6px; background: var(--bg-dark); color: white; border: 1px solid var(--border-color);">
+                    <option value="">Toutes versions CVSS</option>
+                    <option value="3.1">CVSS 3.1</option>
+                    <option value="3.0">CVSS 3.0</option>
+                    <option value="2.0">CVSS 2.0</option>
+                </select>
+
+                <button id="exploited-filter-btn" class="btn-primary"
+                    style="font-size:0.8rem;padding:0.5rem 1rem; white-space:nowrap; flex-shrink:0;"
+                    onclick="toggleExploitedFilter()">🔴 Exploitées uniquement</button>
+            </div>
+
+            <section id="overview-section" class="dashboard-section">
+                <div class="stats-grid">
+                    <div class="stat-card" id="total-threats">
+                        <div class="stat-title">Total Vulnerabilities</div>
+                        <div class="stat-value">0</div>
+                        <div class="stat-change">NVD Dataset</div>
+                    </div>
+                    <div class="stat-card critical" id="critical-count">
+                        <div class="stat-title">Critical Severity</div>
+                        <div class="stat-value">0</div>
+                        <div class="stat-desc">CVSS 9.0 - 10.0</div>
+                    </div>
+                    <div class="stat-card high" id="high-count">
+                        <div class="stat-title">High Severity</div>
+                        <div class="stat-value">0</div>
+                        <div class="stat-desc">CVSS 7.0 - 8.9</div>
+                    </div>
+                    <div class="stat-card medium" id="medium-count">
+                        <div class="stat-title">Medium Severity</div>
+                        <div class="stat-value">0</div>
+                        <div class="stat-desc">CVSS 4.0 - 6.9</div>
+                    </div>
+                    <div class="stat-card exploited" id="exploited-count">
+                        <div class="stat-title">Known Exploited</div>
+                        <div class="stat-value">0</div>
+                        <div class="stat-desc">Source: CISA KEV</div>
+                    </div>
+                </div>
+
+                <div class="recent-threats-container">
+                    <div class="section-header">
+                        <h3>Vulnérabilités <span id="table-subtitle"></span></h3>
+                        <button class="btn-primary" id="view-all-btn">Voir tout</button>
+                    </div>
+                    <div class="table-wrapper">
+                        <table id="recent-threats-table">
+                            <thead>
+                                <tr>
+                                    <th data-sort="id" class="sortable">ID <span>↕️</span></th>
+                                    <th data-sort="published" class="sortable">Publié <span>↕️</span></th>
+                                    <th data-sort="score" class="sortable">Sévérité <span>↕️</span></th>
+                                    <th>Description</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="threat-list-body">
+                                <!-- Data injected here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="table-pagination">
+                        <!-- Pagination buttons -->
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal for details -->
+    <div id="details-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <div id="modal-details-body"></div>
+        </div>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
