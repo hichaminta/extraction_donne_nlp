@@ -1,22 +1,28 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class CinsAdapter(BaseAdapter):
-    """
-    Adapter pour CINS Army (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("ip") or record.get("valeur")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        ip = raw_data.get("indicator")
-        threat = raw_data.get("threat")
-        collected_at = raw_data.get("collected_at")
+        description = "CINS Army Malicious IP"
+        raw_text = f"IP: {value}\nSource: CINS Army"
+        
+        context = record.copy()
 
-        ioc_record = self.normalize_ioc(
-            value=ip,
-            ioc_type="ip",
+        item = self.normalize_ioc(
+            record=record,
             source="CINS Army",
-            description=f"Threat type: {threat}",
-            first_seen=collected_at,
-            raw=raw_data
+            value=value,
+            ioc_type="ip",
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("collected_at"),
+            confidence=None,
+            tags=["cins_army"],
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

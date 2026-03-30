@@ -1,25 +1,35 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class PulsediveAdapter(BaseAdapter):
-    """
-    Adapter pour Pulsedive (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("indicator")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        indicator = raw_data.get("indicator")
-        ioc_type = raw_data.get("type")
-        risk = raw_data.get("risk")
-        threats = raw_data.get("threats")
-        collected_at = raw_data.get("collected_at")
+        risk = record.get("risk")
+        threats = record.get("threats") or record.get("threat")
+        description = f"Risk Level: {risk or 'Unknown'} | Threats: {threats or 'None'}"
+        
+        raw_text = f"Indicator: {value}\nRisk: {risk}\nThreats: {threats}"
+        tags = self.to_list(record.get("tags") or [])
+        if threats and isinstance(threats, str):
+            tags.append(threats)
 
-        ioc_record = self.normalize_ioc(
-            value=indicator,
-            ioc_type=ioc_type,
+        context = record.copy()
+
+        item = self.normalize_ioc(
+            record=record,
             source="Pulsedive",
-            description=f"Risk Level: {risk} | Threats: {threats}",
+            value=value,
+            ioc_type=record.get("type"),
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("first_seen"),
+            last_seen=record.get("last_seen"),
             confidence=risk,
-            first_seen=collected_at,
-            raw=raw_data
+            tags=tags,
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

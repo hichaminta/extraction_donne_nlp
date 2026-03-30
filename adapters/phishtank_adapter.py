@@ -1,22 +1,29 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class PhishtankAdapter(BaseAdapter):
-    """
-    Adapter pour PhishTank (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("url")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        url = raw_data.get("url")
-        submission_time = raw_data.get("submission_time")
-        verified = raw_data.get("verified")
+        description = record.get("description") or "Phishing URL reported"
+        raw_text = f"URL: {value}\nSource: PhishTank\nSubmission: {record.get('submission_time')}\nVerified: {record.get('verification_time')}"
+        
+        context = record.copy()
 
-        ioc_record = self.normalize_ioc(
-            value=url,
-            ioc_type="url",
+        item = self.normalize_ioc(
+            record=record,
             source="PhishTank",
-            description=f"PhisTank ID: {raw_data.get('phish_id')} | Verified: {verified}",
-            first_seen=submission_time,
-            raw=raw_data
+            value=value,
+            ioc_type="url",
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("submission_time"),
+            last_seen=record.get("verification_time"),
+            confidence=None,
+            tags=["phishing"],
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

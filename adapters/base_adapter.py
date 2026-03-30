@@ -5,62 +5,60 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 class BaseAdapter:
     """
-    Classe de base contenant les fonctions utiles pour tous les adapters CTI.
-    Normalise les sorties vers les formats IOC ou CVE attendus.
+    Classe de base pour tous les adapters CTI.
+    Normalisation stricte sans perte de données.
     """
 
     @staticmethod
     def clean_text(text):
-        """Nettoie un texte : enlève les espaces inutiles ou retourne None."""
         if text is None or str(text).strip() == "":
             return None
         return str(text).strip()
 
     @staticmethod
     def to_list(value):
-        """Transforme une valeur en liste ou retourne None si vide."""
         if value is None or value == "" or value == []:
-            return None
+            return []
         if isinstance(value, list):
             return value
         return [value]
 
-    @staticmethod
-    def get_first_value(data, keys, default=None):
-        """Cherche et retourne la première valeur trouvée parmi plusieurs clés possibles."""
-        for key in keys:
-            if key in data and data[key]:
-                return data[key]
-        return default
-
-    def normalize_ioc(self, value, ioc_type, source, **kwargs):
+    def normalize_ioc(self, record, source, **kwargs):
         """
-        Retourne le format JSON IOC Standard.
+        Génère un objet IOC au format standard.
         """
         return {
             "type": "ioc",
-            "value": self.clean_text(value),
-            "ioc_type": self.clean_text(ioc_type),
-            "source": self.clean_text(source),
-            "description": self.clean_text(kwargs.get("description")),
-            "tags": self.to_list(kwargs.get("tags")),
-            "first_seen": self.clean_text(kwargs.get("first_seen")),
-            "last_seen": self.clean_text(kwargs.get("last_seen")),
+            "value": kwargs.get("value"),
+            "ioc_type": kwargs.get("ioc_type"),
+            "source": source,
+            "description": kwargs.get("description"),
+            "raw_text": kwargs.get("raw_text"),  # Nouveau champ pour le texte complet
+            "raw_iocs": self.to_list(kwargs.get("raw_iocs") or []),  # Nouveau champ pour les IOCs bruts
+            "raw_cves": self.to_list(kwargs.get("raw_cves") or []),  # Nouveau champ pour les CVEs brutes
+            "tags": self.to_list(kwargs.get("tags") or []),
+            "first_seen": kwargs.get("first_seen"),
+            "last_seen": kwargs.get("last_seen"),
             "confidence": kwargs.get("confidence"),
-            "raw": kwargs.get("raw", {})
+            "context": kwargs.get("context", {}),
+            "raw": record
         }
 
-    def normalize_cve(self, cve_id, source, **kwargs):
+    def normalize_cve(self, record, source, **kwargs):
         """
-        Retourne le format JSON CVE Standard.
+        Génère un objet CVE au format standard.
         """
         return {
             "type": "cve",
-            "cve_id": self.clean_text(cve_id),
-            "description": self.clean_text(kwargs.get("description")),
-            "severity": self.clean_text(kwargs.get("severity")),
+            "cve_id": kwargs.get("cve_id"),
+            "description": kwargs.get("description"),
+            "raw_text": kwargs.get("raw_text"),  # Nouveau champ
+            "raw_iocs": self.to_list(kwargs.get("raw_iocs") or []),  # Nouveau champ
+            "raw_cves": self.to_list(kwargs.get("raw_cves") or []),  # Nouveau champ
+            "severity": kwargs.get("severity"),
             "cvss": kwargs.get("cvss"),
-            "published_date": self.clean_text(kwargs.get("published_date")),
-            "source": self.clean_text(source),
-            "raw": kwargs.get("raw", {})
+            "published_date": kwargs.get("published_date"),
+            "source": source,
+            "context": kwargs.get("context", {}),
+            "raw": record
         }

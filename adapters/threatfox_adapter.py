@@ -1,25 +1,40 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class ThreatfoxAdapter(BaseAdapter):
-    """
-    Adapter pour ThreatFox (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("ioc")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        ioc = raw_data.get("ioc")
-        ioc_type = raw_data.get("ioc_type")
-        malware = raw_data.get("malware")
-        threat_type = raw_data.get("threat_type")
-        first_seen = raw_data.get("first_seen")
+        malware = record.get("malware")
+        threat_type = record.get("threat_type")
+        description = f"Malware: {malware or 'Unknown'} | Threat Type: {threat_type or 'Unknown'}"
+        
+        # Enrichissement de la description avec le contexte existant
+        if record.get("ioc_type_desc"):
+            description += f" | IOC: {record.get('ioc_type_desc')}"
 
-        ioc_record = self.normalize_ioc(
-            value=ioc,
-            ioc_type=ioc_type,
+        tags = self.to_list(record.get("tags") or [])
+        if malware and malware not in tags:
+            tags.append(malware)
+        if threat_type and threat_type not in tags:
+            tags.append(threat_type)
+
+        context = record.copy()  # On garde tout le record dans le contexte
+
+        item = self.normalize_ioc(
+            record=record,
             source="ThreatFox",
-            description=f"Malware: {malware} | Threat Type: {threat_type}",
-            tags=[malware, threat_type] if malware and threat_type else None,
-            first_seen=first_seen,
-            raw=raw_data
+            value=value,
+            ioc_type=record.get("ioc_type"),
+            description=description,
+            raw_iocs=[value],
+            raw_text=description,
+            first_seen=record.get("first_seen"),
+            last_seen=record.get("last_seen"),
+            confidence=record.get("confidence_level"),
+            tags=tags,
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

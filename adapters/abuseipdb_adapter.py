@@ -1,24 +1,31 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class AbuseipdbAdapter(BaseAdapter):
-    """
-    Adapter pour AbuseIPDB (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("ipAddress")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        ip = raw_data.get("ipAddress")
-        score = raw_data.get("abuseConfidenceScore")
-        last_reported = raw_data.get("lastReportedAt")
+        confidence = record.get("abuseConfidenceScore")
+        description = f"Abuse Score: {confidence}% | Country: {record.get('countryCode')}"
+        
+        raw_text = f"IP: {value}\nScore: {confidence}\nReports: {record.get('totalReports')}"
+        
+        context = record.copy()
 
-        # Normalisation vers format IOC Standard
-        ioc_record = self.normalize_ioc(
-            value=ip,
-            ioc_type="ip",
+        item = self.normalize_ioc(
+            record=record,
             source="AbuseIPDB",
-            description=f"Abuse Confidence Score: {score}%",
-            confidence=score,
-            last_seen=last_reported,
-            raw=raw_data
+            value=value,
+            ioc_type="ip",
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("extracted_at"),
+            last_seen=record.get("lastReportedAt"),
+            confidence=confidence,
+            tags=[],
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

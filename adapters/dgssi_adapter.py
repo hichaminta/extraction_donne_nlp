@@ -1,40 +1,46 @@
 from .base_adapter import BaseAdapter
-import logging
+from typing import List
 
 class DgssiAdapter(BaseAdapter):
-    """
-    Adapter pour DGSSI (Normalisé).
-    Génère un record CVE pour chaque CVE identifiée dans le bulletin.
-    """
+    def process(self, record: dict) -> List[dict]:
+        cves = self.to_list(record.get("cves") or [])
+        title = record.get("title")
+        description = record.get("description")
+        raw_text = record.get("description") or title
+        
+        # Contexte complet
+        context = {k: v for k, v in record.items() if k not in ["cves"]}
 
-    def process(self, raw_data):
-        normalized_results = []
-        
-        # Extraction du contexte du bulletin
-        bulletin_title = raw_data.get("title")
-        description = raw_data.get("raw_text_sample")
-        published = self.get_first_value(raw_data, ["date", "published_at"])
-        
-        # Liste des CVEs mentionnées
-        cves = self.to_list(raw_data.get("cves"))
-        
         if not cves:
-            # On pourrait quand même créer un record générique ou logguer
-            logging.warning(f"Bulletin DGSSI '{bulletin_title}' ne contient aucune CVE structurée.")
-            return []
+            # Si pas de CVE, on retourne l'objet global comme bulletin
+            item = self.normalize_ioc(
+                record=record,
+                source="DGSSI",
+                value=title,
+                ioc_type="bulletin",
+                description=description or title,
+                raw_text=raw_text,
+                raw_cves=cves,
+                first_seen=record.get("date"),
+                tags=[],
+                context=context
+            )
+            return [item] if item else []
 
+        results = []
         for cve_id in cves:
-            try:
-                # On crée un record CVE complet
-                cve_record = self.normalize_cve(
-                    cve_id=cve_id,
-                    source="DGSSI",
-                    description=f"Bulletin: {bulletin_title}\n\n{description}",
-                    published_date=published,
-                    raw=raw_data # On garde tout le bulletin pour référence
-                )
-                normalized_results.append(cve_record)
-            except Exception as e:
-                logging.error(f"Erreur lors de la normalisation d'une CVE DGSSI : {e}")
-
-        return normalized_results
+            item = self.normalize_cve(
+                record=record,
+                source="DGSSI",
+                cve_id=cve_id,
+                description=description or title,
+                raw_text=raw_text,
+                raw_cves=cves,
+                severity=record.get("severity"),
+                cvss=record.get("cvss"),
+                published_date=record.get("date"),
+                context=context
+            )
+            if item:
+                results.append(item)
+        return results

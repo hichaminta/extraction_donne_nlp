@@ -5,7 +5,7 @@ from adapters import (
     DgssiAdapter, ThreatfoxAdapter, AbuseipdbAdapter, CinsAdapter,
     MalwarebazaarAdapter, OpenphishAdapter, PhishtankAdapter,
     VirustotalAdapter, NvdAdapter, PulsediveAdapter,
-    FeodotrackerAdapter, SpamhausAdapter, OtxAdapter
+    FeodotrackerAdapter, SpamhausAdapter, OtxAdapter, UrlhausAdapter
 )
 
 # Configuration du logging pour voir ce qui se passe
@@ -57,8 +57,8 @@ def run_all_adapters():
         {"path": "feodotracker/feodo_data.json", "adapter": FeodotrackerAdapter(), "name": "feodotracker"},
         {"path": "pulsedive/pulsedive_iocs.json", "adapter": PulsediveAdapter(), "name": "pulsedive"},
         {"path": "Spamhaus/spamhaus_data.json", "adapter": SpamhausAdapter(), "name": "spamhaus"},
-        {"path": "OTX/pulse_data.json", "adapter": OtxAdapter(), "name": "otx_alienvault"},
-        {"path": "Otx alienvault/otx_pulses.json", "adapter": OtxAdapter(), "name": "otx_alienvault"},
+        {"path": "url/urlhaus_full.json", "adapter": UrlhausAdapter(), "name": "urlhaus"},
+        # {"path": "Otx alienvault/otx_pulses.json", "adapter": OtxAdapter(), "name": "otx_alienvault"},
         {"path": "nvd_cisa/cve_data_exploited.json", "adapter": NvdAdapter(), "name": "nvd"},
     ]
 

@@ -1,20 +1,30 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class OpenphishAdapter(BaseAdapter):
-    """
-    Adapter pour OpenPhish (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("url")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        url = raw_data.get("url")
-        collected_at = raw_data.get("collected_at")
-
-        ioc_record = self.normalize_ioc(
-            value=url,
-            ioc_type="url",
+        first_seen = record.get("first_seen") or record.get("collected_at")
+        description = record.get("description") or "Phishing URL detected"
+        raw_text = f"URL: {value}\nSource: OpenPhish\nPhishing detected"
+        
+        context = record.copy()
+        
+        item = self.normalize_ioc(
+            record=record,
             source="OpenPhish",
-            first_seen=collected_at,
-            raw=raw_data
+            value=value,
+            ioc_type="url",
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=first_seen,
+            last_seen=None,
+            confidence=None,
+            tags=["phishing"],
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

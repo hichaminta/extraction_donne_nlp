@@ -1,32 +1,36 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class UrlhausAdapter(BaseAdapter):
-    """
-    Adapter pour URLHaus (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("url")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        normalized_results = []
-        
-        # URLHaus peut être une liste ou un objet unique
-        items = self.to_list(raw_data)
-        
-        for item in items:
-            url = item.get("url")
-            status = item.get("url_status")
-            reporter = item.get("reporter")
-            tags = item.get("tags")
-            collected_at = item.get("date_added")
+        description = record.get("description") or "Malicious URL detected"
+        threat = record.get("threat")
+        if threat:
+            description += f" | Threat: {threat}"
+            
+        raw_text = f"URL: {value}\nSource: URLHaus\nThreat: {threat}\nStatus: {record.get('url_status')}"
+        tags = self.to_list(record.get("tags") or [])
+        if threat:
+            tags.append(threat)
 
-            ioc_record = self.normalize_ioc(
-                value=url,
-                ioc_type="url",
-                source="URLHaus",
-                description=f"Status: {status} | Reporter: {reporter}",
-                tags=tags,
-                first_seen=collected_at,
-                raw=item
-            )
-            normalized_results.append(ioc_record)
+        context = record.copy()
 
-        return normalized_results
+        item = self.normalize_ioc(
+            record=record,
+            source="URLHaus",
+            value=value,
+            ioc_type="url",
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("date_added") or record.get("first_seen"),
+            last_seen=record.get("last_seen"),
+            confidence=None,
+            tags=tags,
+            context=context
+        )
+        return [item] if item else []

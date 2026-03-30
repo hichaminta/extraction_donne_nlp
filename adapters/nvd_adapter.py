@@ -1,44 +1,30 @@
 from .base_adapter import BaseAdapter
-import logging
+from typing import List
 
 class NvdAdapter(BaseAdapter):
-    """
-    Adapter pour NVD / CISA (Normalisé).
-    Retourne les CVEs au format CVE Standard.
-    """
-
-    def process(self, raw_data):
-        try:
-            cve_id = self.get_first_value(raw_data, ["cve_id", "cveID", "id"])
-            if not cve_id:
-                logging.warning("Record NVD sans identifiant CVE trouvé.")
-                return []
-
-            description = raw_data.get("description")
-            published = self.get_first_value(raw_data, ["published", "published_date", "publishedDate"])
-            
-            # Calcul du score et sévérité
-            cvss_score = raw_data.get("base_score")
-            severity = raw_data.get("severity")
-            
-            # Gestion du format spécifique cve_data_exploited
-            cvss_list = raw_data.get("cvss", [])
-            if cvss_score is None and cvss_list and isinstance(cvss_list, list):
-                cvss_score = cvss_list[0].get("score")
-
-            # Normalisation vers le format CVE Standard
-            cve_record = self.normalize_cve(
-                cve_id=cve_id,
-                source="NVD",
-                description=description,
-                severity=severity,
-                cvss=cvss_score,
-                published_date=published,
-                raw=raw_data  # Contexte complet préservé
-            )
-            
-            return [cve_record] # Retourne toujours une liste
-            
-        except Exception as e:
-            logging.error(f"Erreur lors de la normalisation NVD : {e}")
+    def process(self, record: dict) -> List[dict]:
+        cve_id = record.get("cve_id") or record.get("id")
+        if not cve_id:
             return []
+
+        # Extraction des infos CVE
+        description = record.get("description")
+        severity = record.get("severity") or record.get("baseSeverity")
+        cvss = record.get("cvss") or record.get("baseScore")
+        published_date = record.get("published_date") or record.get("published")
+
+        context = record.copy()
+
+        item = self.normalize_cve(
+            record=record,
+            source="NVD",
+            cve_id=cve_id,
+            description=description,
+            raw_text=description,
+            raw_cves=[cve_id],
+            severity=severity,
+            cvss=cvss,
+            published_date=published_date,
+            context=context
+        )
+        return [item] if item else []

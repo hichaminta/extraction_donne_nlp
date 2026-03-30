@@ -1,44 +1,36 @@
 from .base_adapter import BaseAdapter
-import logging
+from typing import List
 
 class OtxAdapter(BaseAdapter):
-    """
-    Adapter pour OTX AlienVault (Normalisé).
-    Extrait chaque indicateur individuellement du Pulse.
-    """
-
-    def process(self, raw_data):
-        normalized_results = []
-        
-        pulse_name = raw_data.get("name", "Sans nom")
-        description = raw_data.get("description")
-        published = raw_data.get("created")
-        tags = raw_data.get("tags")
-        
-        indicators = raw_data.get("indicators", [])
-        
-        if not indicators:
-            logging.warning(f"OTX Pulse '{pulse_name}' ne contient aucun indicateur.")
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("indicator")
+        if not value:
             return []
 
-        for ind in indicators:
-            try:
-                # On extrait la valeur et le type d'IOC
-                value = ind.get("indicator")
-                ioc_type = ind.get("type", "unknown").lower()
-                
-                # Normalisation vers le format IOC Standard
-                ioc_record = self.normalize_ioc(
-                    value=value,
-                    ioc_type=ioc_type,
-                    source="OTX AlienVault",
-                    description=description,
-                    tags=tags,
-                    first_seen=published,
-                    raw=raw_data  # On garde le contexte complet (Pulse entier)
-                )
-                normalized_results.append(ioc_record)
-            except Exception as e:
-                logging.error(f"Erreur lors de la normalisation d'un indicateur OTX : {e}")
+        pulse_title = record.get("pulse_title") or "Unknown Pulse"
+        pulse_description = record.get("pulse_description") or ""
+        
+        description = f"OTX Pulse: {pulse_title}"
+        if pulse_description:
+            description += f" | Description: {pulse_description}"
 
-        return normalized_results
+        raw_text = f"Title: {pulse_title}\nDescription: {pulse_description}"
+        tags = self.to_list(record.get("tags") or [])
+        
+        context = record.copy()
+
+        item = self.normalize_ioc(
+            record=record,
+            source="OTX AlienVault",
+            value=value,
+            ioc_type=record.get("type"),
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("created"),
+            last_seen=record.get("modified"),
+            confidence=None,
+            tags=tags,
+            context=context
+        )
+        return [item] if item else []

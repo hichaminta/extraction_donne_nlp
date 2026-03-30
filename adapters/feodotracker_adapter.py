@@ -1,24 +1,38 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class FeodotrackerAdapter(BaseAdapter):
-    """
-    Adapter pour FeodoTracker (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("ioc_value")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        ip = raw_data.get("ip_address")
-        malware = raw_data.get("malware")
-        status = raw_data.get("status")
-        port = raw_data.get("port")
-        first_seen = raw_data.get("first_seen")
+        malware = record.get("malware_family")
+        port = record.get("port")
+        status = record.get("c2_status")
+        description = f"Malware: {malware or 'Unknown'} | Port: {port or 'N/A'} | Status: {status or 'Unknown'}"
+        
+        raw_text = f"IOC: {value}\nMalware: {malware}\nPort: {port}\nStatus: {status}\nAS: {record.get('as_name')}"
+        tags = self.to_list(record.get("tags") or [])
+        if malware:
+            tags.append(malware)
+        if status:
+            tags.append(status)
 
-        ioc_record = self.normalize_ioc(
-            value=ip,
-            ioc_type="ip",
+        context = record.copy()
+
+        item = self.normalize_ioc(
+            record=record,
             source="FeodoTracker",
-            description=f"Malware: {malware} | Port: {port} | Status: {status}",
-            first_seen=first_seen,
-            raw=raw_data
+            value=value,
+            ioc_type="ip",
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("first_seen_utc"),
+            last_seen=record.get("last_online"),
+            confidence=None,
+            tags=tags,
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

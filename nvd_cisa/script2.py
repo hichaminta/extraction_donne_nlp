@@ -11,8 +11,9 @@ BASE = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_root, ".env"))
 API_KEY = os.getenv("NVD_API_KEY")
-TRACKING_FILE = "last_run.csv"
-OUTPUT_JSON = "cve_data.json"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TRACKING_FILE = os.path.join(SCRIPT_DIR, "last_run.csv")
+OUTPUT_JSON = os.path.join(SCRIPT_DIR, "cve_data.json")
 
 def get_last_run_date():
     """Récupère la date de la dernière extraction depuis le fichier CSV."""

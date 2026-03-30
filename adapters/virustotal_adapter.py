@@ -1,29 +1,38 @@
 from .base_adapter import BaseAdapter
+from typing import List
 
 class VirustotalAdapter(BaseAdapter):
-    """
-    Adapter pour VirusTotal (Normalisé).
-    """
+    def process(self, record: dict) -> List[dict]:
+        value = record.get("indicator")
+        if not value:
+            return []
 
-    def process(self, raw_data):
-        target = raw_data.get("target")
-        target_type = raw_data.get("target_type")
-        reputation = raw_data.get("reputation")
-        stats = raw_data.get("last_analysis_stats", {})
-        tags = raw_data.get("tags")
-        
-        # On calcule un résumé des détections
+        stats = record.get("stats", {})
         malicious = stats.get("malicious", 0)
-        total = sum(stats.values()) if stats else 0
+        suspicious = stats.get("suspicious", 0)
+        reputation = record.get("reputation", 0)
         
-        ioc_record = self.normalize_ioc(
-            value=target,
-            ioc_type=target_type,
+        description = f"Malicious: {malicious} | Suspicious: {suspicious} | Reputation Score: {reputation}"
+        if record.get("meaningful_name"):
+            description += f" | Name: {record.get('meaningful_name')}"
+        
+        raw_text = f"Indicator: {value}\nDescription: {description}\nMetadata: {record.get('as_owner', '')} {record.get('country', '')}"
+        tags = self.to_list(record.get("tags") or [])
+        
+        context = record.copy()
+
+        item = self.normalize_ioc(
+            record=record,
             source="VirusTotal",
-            description=f"Detections: {malicious}/{total} | Reputation Score: {reputation}",
+            value=value,
+            ioc_type=record.get("indicator_type"),
+            description=description,
+            raw_text=raw_text,
+            raw_iocs=[value],
+            first_seen=record.get("enriched_at"),
+            last_seen=record.get("last_modification_date"),
             confidence=reputation,
             tags=tags,
-            raw=raw_data
+            context=context
         )
-
-        return [ioc_record]
+        return [item] if item else []

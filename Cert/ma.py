@@ -24,8 +24,10 @@ BASE = f"https://{DOMAIN}"
 RSS_URL = f"{BASE}/fr/rss.xml"
 LIST_URL = f"{BASE}/fr/bulletins"
 
-OUT_JSONL      = "dgssi_bulletins.jsonl"
-OUT_CSV        = "last_run.csv"   # 1 ligne : date du dernier run
+# Chemins absolus pour que les fichiers soient dans le même dossier que le script
+SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
+OUT_JSONL      = os.path.join(SCRIPT_DIR, "dgssi_bulletins.jsonl")
+OUT_CSV        = os.path.join(SCRIPT_DIR, "lastrun.csv")   # date du dernier run
 
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CTI-PFE"

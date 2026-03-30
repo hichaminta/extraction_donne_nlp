@@ -14,8 +14,9 @@ API_KEY = os.getenv("PULSEDIVE_API_KEY")
 
 BASE_URL = "https://pulsedive.com/api/explore.php"
 
-OUTPUT_FILE = "pulsedive_iocs.json"
-TRACKING_CSV = "last_run.csv"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_FILE = os.path.join(SCRIPT_DIR, "pulsedive_iocs.json")
+TRACKING_CSV = os.path.join(SCRIPT_DIR, "last_run.csv")
 
 
 def get_last_run():
