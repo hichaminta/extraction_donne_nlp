@@ -1,10 +1,7 @@
 """
 run_regex_extractor.py
 ======================
-Script d'orchestration optimisé du module RegexExtractor.
-
-Traite les fichiers un par un pour limiter la consommation de mémoire.
-Fournit une barre de progression textuelle.
+Script d'orchestration pour RegexExtractor avec dédoublonnage global unifié.
 """
 
 import os
@@ -17,99 +14,94 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 INPUT_DIR = "output_adapters"
 OUTPUT_DIR = "output_regex"
 
-def process_file(extractor, input_path):
-    """Charge un fichier et le traite directement."""
-    try:
-        with open(input_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        items = data if isinstance(data, list) else [data]
-        if not items:
-            return {"iocs": [], "cves": []}
-        
-        # Le filtrage des sources est fait à l'intérieur de extractor.process
-        return extractor.process(items)
-    except Exception as e:
-        logging.error("Erreur lors du traitement de %s : %s", input_path, e)
-        return {"iocs": [], "cves": []}
-
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     extractor = RegexExtractor()
     
-    all_iocs = []
-    all_cves = []
+    # Dictionnaires pour déduplication et fusion globale
+    # Clé IOC : (value, ioc_type)
+    # Clé CVE : cve_id
+    all_iocs_dict = {}
+    all_cves_dict = {}
     total_input_count = 0
-    
-    # Statistiques par source
-    ioc_by_source = {}
-    cve_by_source = {}
     
     files = sorted([f for f in os.listdir(INPUT_DIR) if f.endswith("_adapter.json")])
     total_files = len(files)
     
-    logging.info("Démarrage du traitement de %d fichiers...", total_files)
+    logging.info("Démarrage de l'extraction unifiée pour %d fichiers...", total_files)
     
     for i, filename in enumerate(files, 1):
         path = os.path.join(INPUT_DIR, filename)
         logging.info("[%d/%d] Traitement de '%s'...", i, total_files, filename)
         
-        results = process_file(extractor, path)
-        
-        iocs = results["iocs"]
-        cves = results["cves"]
-        
-        all_iocs.extend(iocs)
-        all_cves.extend(cves)
-        
-        # On pourrait compter les inputs ici mais process_file ne les retourne pas.
-        # On va juste recharger rapidement la longueur pour les stats.
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                count = len(data) if isinstance(data, list) else 1
-                total_input_count += count
-        except:
-            pass
-
-        # Mise à jour des stats par source pour ce fichier
-        for ioc in iocs:
-            src = ioc.get("source", "unknown")
-            ioc_by_source[src] = ioc_by_source.get(src, 0) + 1
-        for cve in cves:
-            src = cve.get("source", "unknown")
-            cve_by_source[src] = cve_by_source.get(src, 0) + 1
+                items = json.load(f)
             
-        logging.info("   -> %d IOC et %d CVE extraits de ce fichier.", len(iocs), len(cves))
+            if not isinstance(items, list): items = [items]
+            total_items = len(items)
+            for j, item in enumerate(items, 1):
+                if j % 1000 == 0:
+                    logging.info("  ... %d/%d items traités", j, total_items)
+                
+                res = extractor.process_single_item(item)
+                
+                # Fusion des IOC : (value, ioc_type)
+                for ioc in res["iocs"]:
+                    key = (ioc["value"], ioc["ioc_type"])
+                    if key in all_iocs_dict:
+                        all_iocs_dict[key] = extractor.merge_two_iocs(all_iocs_dict[key], ioc)
+                    else:
+                        all_iocs_dict[key] = ioc
 
-    # Sauvegarder les résultats globaux
-    ioc_path = os.path.join(OUTPUT_DIR, "iocs_extracted.json")
-    cve_path = os.path.join(OUTPUT_DIR, "cves_extracted.json")
-    summary_path = os.path.join(OUTPUT_DIR, "summary.json")
+                # Fusion des CVE : cve_id
+                for cve in res["cves"]:
+                    cid = cve["cve_id"]
+                    if cid in all_cves_dict:
+                        all_cves_dict[cid] = extractor.merge_two_cves(all_cves_dict[cid], cve)
+                    else:
+                        all_cves_dict[cid] = cve
+            
+            del items
+            extractor.extract_iocs_from_text_cached.cache_clear()
+            extractor.extract_cves_from_text_cached.cache_clear()
+            
+        except Exception as e:
+            logging.error("Erreur lors du traitement de %s : %s", filename, e)
 
-    logging.info("Sauvegarde des résultats finaux (%d IOC, %d CVE)...", len(all_iocs), len(all_cves))
-    
-    with open(ioc_path, "w", encoding="utf-8") as f:
+    # Conversion en listes finales
+    all_iocs = list(all_iocs_dict.values())
+    all_cves = list(all_cves_dict.values())
+    all_iocs_dict.clear()
+    all_cves_dict.clear()
+
+    # Sauvegarde
+    logging.info("Sauvegarde de %d IOC uniques...", len(all_iocs))
+    with open(os.path.join(OUTPUT_DIR, "iocs_extracted.json"), "w", encoding="utf-8") as f:
         json.dump(all_iocs, f, ensure_ascii=False, indent=2)
 
-    with open(cve_path, "w", encoding="utf-8") as f:
+    logging.info("Sauvegarde de %d CVE uniques...", len(all_cves))
+    with open(os.path.join(OUTPUT_DIR, "cves_extracted.json"), "w", encoding="utf-8") as f:
         json.dump(all_cves, f, ensure_ascii=False, indent=2)
+
+    # Summary
+    ioc_by_source = {}; cve_by_source = {}
+    for ioc in all_iocs:
+        for s in ioc.get("sources", []): ioc_by_source[s] = ioc_by_source.get(s, 0) + 1
+    for cve in all_cves:
+        for s in cve.get("sources", []): cve_by_source[s] = cve_by_source.get(s, 0) + 1
 
     summary = {
         "total_input_objects": total_input_count,
-        "total_iocs_extracted": len(all_iocs),
-        "total_cves_extracted": len(all_cves),
+        "total_unique_iocs": len(all_iocs),
+        "total_unique_cves": len(all_cves),
         "iocs_by_source": ioc_by_source,
-        "cves_by_source": cve_by_source,
+        "cves_by_source": cve_by_source
     }
-
-    with open(summary_path, "w", encoding="utf-8") as f:
+    with open(os.path.join(OUTPUT_DIR, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    logging.info("Traitement terminé.")
-    logging.info("  → IOC : %d (%s)", len(all_iocs), ioc_path)
-    logging.info("  → CVE : %d (%s)", len(all_cves), cve_path)
-    logging.info("  → Résumé : %s", summary_path)
+    logging.info("Extraction terminée.")
 
 if __name__ == "__main__":
     main()

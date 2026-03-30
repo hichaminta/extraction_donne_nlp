@@ -1,462 +1,254 @@
 """
 regex_extractor.py
 ==================
-Module de post-traitement CTI basé uniquement sur des expressions régulières.
-
-Ce module lit les objets normalisés produits par les adapters et :
-  1. Extrait les IOC (IPv4, URL, domain, email, hash) par regex
-  2. Extrait les CVE (CVE-YYYY-NNNNN) par regex
-  3. Fusionne avec les IOC/CVE déjà présents (raw_iocs / raw_cves)
-  4. Déduplique proprement
-  5. Sépare le résultat final en deux listes : iocs et cves
-
-Sources traitées par regex MAINTENANT :
-  - TOUTES les sources sauf celles réservées au NLP.
-  - Seules les sources réservées au NLP sont exclues. Toutes les autres sources sont traitées par Regex.
-
-Aucun NLP, uniquement filtrage par blacklist explicite.
+Module de post-traitement CTI optimisé pour une sortie légère et unifiée.
 """
 
 import re
 import json
 import logging
+import copy
 from typing import Any
+from functools import lru_cache
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-# ---------------------------------------------------------------------------
-# Sources RÉSERVÉES pour le NLP (étape future)
-# ⚠️ Ne jamais traiter ces sources via Regex.
-# ---------------------------------------------------------------------------
-NLP_RESERVED_SOURCES = {
-    "dgssi",
-    "otx alienvault",
-    "pulsedive"
-}
+# Sources RÉSERVÉES pour le NLP
+NLP_RESERVED_SOURCES = {"dgssi", "otx alienvault", "pulsedive"}
 
-# ---------------------------------------------------------------------------
 # Patterns regex
-# ---------------------------------------------------------------------------
-
-# IPv4 - exclut les segments hors 0-255
-_IPV4 = re.compile(
-    r"\b"
-    r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}"
-    r"(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)"
-    r"\b"
-)
-
-# URL (http/https/ftp)
-_URL = re.compile(
-    r"https?://[^\s\"'<>\]\[}{|\\^`]+"
-    r"|ftp://[^\s\"'<>\]\[}{|\\^`]+"
-)
-
-# Domain (sans IP, sans TLD trop courts)
-_DOMAIN = re.compile(
-    r"\b"
-    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+"
-    r"(?:com|net|org|io|gov|edu|mil|int|info|biz|mobi|name|museum"
-    r"|co|de|fr|uk|us|ru|cn|jp|br|in|ma|eu|be|nl|es|it|pl|se|ch"
-    r"|au|ca|nz|sg|hk|za|ar|mx|tr|ua|ro|cz|hu|gr|fi|no|dk|pt|at"
-    r"|onion|xyz|top|app|dev|cloud|site|tech|club|shop|online|pro"
-    r"|click|stream|zip|mov|review)"
-    r"\b",
-    re.IGNORECASE
-)
-
-# Email
-_EMAIL = re.compile(
-    r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"
-)
-
-# MD5 (32 hex chars)
+_IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\b")
+_URL = re.compile(r"https?://[^\s\"'<>\]\[}{|\\^`]+|ftp://[^\s\"'<>\]\[}{|\\^`]+")
+_DOMAIN = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|gov|edu|mil|int|info|biz|mobi|name|museum|co|de|fr|uk|us|ru|cn|jp|br|in|ma|eu|be|nl|es|it|pl|se|ch|au|ca|nz|sg|hk|za|ar|mx|tr|ua|ro|cz|hu|gr|fi|no|dk|pt|at|onion|xyz|top|app|dev|cloud|site|tech|club|shop|online|pro|click|stream|zip|mov|review)\b", re.IGNORECASE)
+_EMAIL = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
 _MD5 = re.compile(r"\b[0-9a-fA-F]{32}\b")
-
-# SHA1 (40 hex chars)
 _SHA1 = re.compile(r"\b[0-9a-fA-F]{40}\b")
-
-# SHA256 (64 hex chars)
 _SHA256 = re.compile(r"\b[0-9a-fA-F]{64}\b")
-
-# CVE identifier
-_CVE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
-
-
-# ---------------------------------------------------------------------------
-# RegexExtractor
-# ---------------------------------------------------------------------------
+_CVE_PAT = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
 
 class RegexExtractor:
-    """
-    Extrait des IOC et des CVE depuis un texte brut par expressions régulières.
-    Fusionne avec les données existantes et déduplique.
-    """
-
     @staticmethod
     def normalize_source_name(source: Any) -> str:
-        """Normalise le nom de la source (casse et espaces)."""
-        if not source:
-            return ""
+        if not source: return ""
         return str(source).strip().lower()
 
-    # --- Extraction depuis un texte ---
+    @lru_cache(maxsize=10000)
+    def extract_iocs_from_text_cached(self, text: str) -> tuple[tuple[str, str], ...]:
+        if not text or len(text) < 4: return tuple()
+        found = []
+        seen = set()
+        def _add(v, t):
+            v_s = v.strip()
+            if (v_s, t) not in seen and v_s:
+                seen.add((v_s, t)); found.append((v_s, t))
+        
+        if "://" in text:
+            for m in _URL.finditer(text): _add(m.group(), "url")
+        if "@" in text:
+            for m in _EMAIL.finditer(text): _add(m.group(), "email")
+        if "." in text:
+            for m in _IPV4.finditer(text): _add(m.group(), "ip")
+        if len(text) >= 32:
+            for m in _SHA256.finditer(text): _add(m.group(), "sha256")
+            for m in _SHA1.finditer(text):
+                if (m.group(), "sha256") not in seen: _add(m.group(), "sha1")
+            for m in _MD5.finditer(text):
+                if (m.group(), "sha256") not in seen and (m.group(), "sha1") not in seen: _add(m.group(), "md5")
+        if "." in text:
+            for m in _DOMAIN.finditer(text):
+                v = m.group()
+                if not any(v in f[0] for f in found if f[1] in ("url", "email")): _add(v, "domain")
+        return tuple(found)
 
     def extract_iocs_from_text(self, text: str) -> list[dict]:
-        """
-        Parcourt le texte et extrait tous les IOC détectables par regex.
-        Renvoie une liste de dicts {"value": ..., "ioc_type": ...}.
-        L'ordre d'application des regex est important pour éviter les
-        faux positifs (les URLs et emails sont testés avant les domaines
-        et les IPs).
-        """
-        if not text or not isinstance(text, str):
-            return []
+        return [{"value": v, "ioc_type": t} for v, t in self.extract_iocs_from_text_cached(text)]
 
-        found: list[dict] = []
-        seen: set[tuple] = set()
-
-        def _add(value: str, ioc_type: str) -> None:
-            key = (value.strip(), ioc_type)
-            if key not in seen and value.strip():
-                seen.add(key)
-                found.append({"value": value.strip(), "ioc_type": ioc_type})
-
-        # URLs doivent être testées en premier pour éviter une collision
-        # avec domain ou ip
-        for m in _URL.finditer(text):
-            _add(m.group(), "url")
-
-        # Emails avant domain pour éviter une collision
-        for m in _EMAIL.finditer(text):
-            _add(m.group(), "email")
-
-        # IPv4
-        for m in _IPV4.finditer(text):
-            _add(m.group(), "ip")
-
-        # SHA256 avant SHA1 avant MD5 pour éviter les inclusions partielles
-        for m in _SHA256.finditer(text):
-            _add(m.group(), "sha256")
-
-        for m in _SHA1.finditer(text):
-            # Pas déjà capturé comme sha256
-            val = m.group()
-            if (val, "sha256") not in seen:
-                _add(val, "sha1")
-
-        for m in _MD5.finditer(text):
-            val = m.group()
-            if (val, "sha256") not in seen and (val, "sha1") not in seen:
-                _add(val, "md5")
-
-        # Domains (exclusion des IPs déjà vues)
-        for m in _DOMAIN.finditer(text):
-            val = m.group()
-            already_url = any(
-                val in ioc["value"]
-                for ioc in found
-                if ioc["ioc_type"] == "url"
-            )
-            already_email = any(
-                val in ioc["value"]
-                for ioc in found
-                if ioc["ioc_type"] == "email"
-            )
-            if not already_url and not already_email:
-                _add(val, "domain")
-
-        return found
+    @lru_cache(maxsize=10000)
+    def extract_cves_from_text_cached(self, text: str) -> tuple[str, ...]:
+        if not text or "CVE-" not in text.upper(): return tuple()
+        return tuple({m.group().upper().strip() for m in _CVE_PAT.finditer(text)})
 
     def extract_cves_from_text(self, text: str) -> list[str]:
-        """
-        Extrait tous les identifiants CVE d'un texte.
-        Renvoie une liste de strings normalisées en majuscules.
-        """
-        if not text or not isinstance(text, str):
-            return []
-        return list({m.group().upper() for m in _CVE.finditer(text)})
-
-    # --- Sérialisation du contexte pour extraction textuelle ---
-
-    def _context_to_text(self, context: Any) -> str:
-        """Convertit un champ context (dict/list/str) en texte brut."""
-        if context is None:
-            return ""
-        if isinstance(context, str):
-            return context
-        try:
-            return json.dumps(context, ensure_ascii=False)
-        except (TypeError, ValueError):
-            return str(context)
-
-    # --- Collecte des textes sources d'un objet normalisé ---
+        return list(self.extract_cves_from_text_cached(text))
 
     def _collect_texts(self, item: dict) -> str:
-        """
-        Assemble les champs textuels d'un objet normalisé en une seule
-        chaîne pour simplifier l'extraction regex.
-        Champs inspectés : raw_text, description, context.
-        """
-        parts: list[str] = []
-
-        for field in ("raw_text", "description"):
-            val = item.get(field)
-            if val and isinstance(val, str):
-                parts.append(val)
-
-        context_text = self._context_to_text(item.get("context"))
-        if context_text:
-            parts.append(context_text)
-
+        parts = []
+        for f in ("raw_text", "description"):
+            val = item.get(f)
+            if val and isinstance(val, str): parts.append(val)
+        
+        # On évite json.dumps(ctx) car c'est trop lent sur de gros volumes.
+        # Si le contexte contient des chaînes, on peut les ajouter sélectivement.
+        ctx = item.get("context")
+        if isinstance(ctx, str):
+            parts.append(ctx)
+        elif isinstance(ctx, dict):
+            # On ne prend que les valeurs de premier niveau si ce sont des strings
+            for v in ctx.values():
+                if isinstance(v, str) and len(v) < 10000: # Limite de taille pour rester rapide
+                    parts.append(v)
         return "\n".join(parts)
 
-    # --- Fusion et déduplication ---
+    def _clean_recursive(self, data: Any, values_to_remove: set[str]) -> Any:
+        """Version simplifiée pour éviter le blocage sur de gros volumes."""
+        if not data or not values_to_remove: return data
+        if isinstance(data, str):
+            return "[IOC_VALUE]" if data.strip() in values_to_remove else data
+        if isinstance(data, list):
+            return [v for v in data if v not in values_to_remove]
+        if isinstance(data, dict):
+            # On ne nettoie que les valeurs de premier niveau pour la performance
+            return {k: ("[IOC_VALUE]" if isinstance(v, str) and v.strip() in values_to_remove else v) 
+                    for k, v in data.items()}
+        return data
 
-    def merge_iocs(
-        self,
-        existing_raw: list[str],
-        extracted: list[dict],
-    ) -> list[dict]:
-        """
-        Fusionne les IOC bruts (simples strings) déjà présents dans
-        raw_iocs avec les dicts extraits par regex.
-        Déduplique par couple (value, ioc_type).
-        Renvoie une liste de dicts {"value": ..., "ioc_type": ...}.
-        """
-        merged: list[dict] = []
-        seen: set[tuple] = set()
+    def _sanitize_context(self, ctx: Any) -> dict:
+        """Nettoie le contexte pour ne garder que les métadonnées utiles sans les champs lourds."""
+        if not ctx or not isinstance(ctx, dict):
+            return {}
+        # Liste noire des champs à exclure du contexte pour rester léger
+        blacklist = {
+            "raw_text", "description", "raw", 
+            "raw_iocs", "raw_cves", 
+            "merged_iocs", "extracted_iocs", 
+            "merged_cves", "extracted_cves"
+        }
+        return {k: v for k, v in ctx.items() if k not in blacklist}
 
-        # Ajouter les IOC déjà présents (type inconnu → "unknown")
-        for raw_val in (existing_raw or []):
-            if not raw_val:
-                continue
-            key = (str(raw_val).strip(), "unknown")
-            if key not in seen:
-                seen.add(key)
-                merged.append({"value": str(raw_val).strip(), "ioc_type": "unknown"})
-
-        # Ajouter les IOC extraits par regex
-        for ioc in extracted:
-            key = (ioc["value"], ioc["ioc_type"])
-            if key not in seen:
-                seen.add(key)
-                merged.append(ioc)
-
-        return merged
-
-    def merge_cves(
-        self,
-        existing_raw: list[str],
-        extracted: list[str],
-    ) -> list[str]:
-        """
-        Fusionne les CVE déjà présentes dans raw_cves avec celles
-        extraites par regex.
-        Déduplique par cve_id normalisé en majuscules.
-        """
-        seen: set[str] = set()
-        merged: list[str] = []
-
-        for cve_id in list(existing_raw or []) + list(extracted):
-            norm = str(cve_id).strip().upper()
-            if norm and norm not in seen:
-                seen.add(norm)
-                merged.append(norm)
-
-        return merged
-
-    # --- Construction des objets de sortie ---
-
-    def _build_ioc_object(
-        self,
-        original: dict,
-        ioc_entry: dict,
-    ) -> dict:
-        """
-        Construit un objet IOC au format standard simplifié.
-        """
+    def _build_ioc_object(self, value: str, ioc_type: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
+        """Format final léger IOC (SANS raw_text/description/raw_iocs)"""
+        ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
         return {
             "type": "ioc",
-            "ioc_type": ioc_entry.get("ioc_type"),
-            "value": ioc_entry.get("value"),
-            "source": original.get("source"),
-            "description": original.get("description"),
-            "raw_text": original.get("raw_text"),
-            "tags": list(original.get("tags") or []),
-            "first_seen": original.get("first_seen"),
-            "last_seen": original.get("last_seen"),
-            "confidence": original.get("confidence"),
-            "context": original.get("context", {}),
-            "raw": original.get("raw", {}),
+            "value": value,
+            "ioc_type": ioc_type,
+            "sources": [source] if source else [],
+            "tags": list(item.get("tags") or []),
+            "first_seen": item.get("first_seen"),
+            "last_seen": item.get("last_seen"),
+            "confidence": item.get("confidence"),
+            "contexts": [ctx] if ctx else []
         }
 
-    def _build_cve_object(
-        self,
-        original: dict,
-        cve_id: str,
-    ) -> dict:
-        """
-        Construit un objet CVE au format standard simplifié.
-        """
+    def _build_cve_object(self, cve_id: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
+        """Format final léger CVE (SANS raw_text/description/raw_cves)"""
+        ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
+        # Normalisation CVSS pour être toujours une liste
+        cvss = item.get("cvss")
+        if cvss is None:
+            cvss_list = []
+        elif isinstance(cvss, list):
+            cvss_list = cvss
+        else:
+            cvss_list = [cvss]
+            
         return {
             "type": "cve",
             "cve_id": cve_id,
-            "source": original.get("source"),
-            "description": original.get("description"),
-            "raw_text": original.get("raw_text"),
-            "severity": original.get("severity"),
-            "cvss": original.get("cvss"),
-            "published_date": original.get("published_date"),
-            "context": original.get("context", {}),
-            "raw": original.get("raw", {}),
+            "sources": [source] if source else [],
+            "severity": item.get("severity"),
+            "cvss": cvss_list,
+            "published_date": item.get("published_date"),
+            "contexts": [ctx] if ctx else []
         }
 
-    # --- Point d'entrée principal ---
-
-    def process(self, items: list[dict]) -> dict:
-        """
-        Traite une liste d'objets normalisés (IOC ou CVE) produits par
-        les adapters.
-
-        Pour chaque objet dont la source est activée :
-          1. Collecte les textes (raw_text, description, context)
-          2. Extrait les IOC par regex
-          3. Extrait les CVE par regex
-          4. Fusionne avec raw_iocs / raw_cves existants
-          5. Déduplique
-
-        Retourne :
-          {
-            "iocs": [...],   # objets IOC (type "ioc")
-            "cves": [...],   # objets CVE (type "cve")
-          }
-        """
-        result_iocs: list[dict] = []
-        result_cves: list[dict] = []
-
-        # Déduplication globale sur l'ensemble du résultat final
-        seen_iocs: set[tuple] = set()
-        seen_cves: set[str] = set()
+    def process_single_item(self, item: dict) -> dict:
+        source = self.normalize_source_name(item.get("source"))
+        if source in NLP_RESERVED_SOURCES: return {"iocs": [], "cves": []}
         
-        total_items = len(items)
-        for i, item in enumerate(items):
-            if i > 0 and i % 10000 == 0:
-                logging.info("   -> Progression dans le fichier : %d/%d objets traités...", i, total_items)
+        # 1. Extraction regex classique
+        text = self._collect_texts(item)
+        iocs_reg = self.extract_iocs_from_text(text)
+        cves_reg = self.extract_cves_from_text(text)
+        
+        # 2. Collecte de toutes les valeurs extraites pour le nettoyage futur
+        all_vals = {ioc["value"] for ioc in iocs_reg}
+        for cid in cves_reg: all_vals.add(cid)
+        
+        # Ajout des raw_iocs / raw_cves à la liste des valeurs à nettoyer
+        for ioc in item.get("raw_iocs", []):
+            if isinstance(ioc, dict) and ioc.get("value"): all_vals.add(ioc["value"])
+            elif isinstance(ioc, str) and ioc.strip(): all_vals.add(ioc.strip())
+        for cid in item.get("raw_cves", []):
+            if isinstance(cid, str) and cid.strip(): all_vals.add(cid.strip())
+        if item.get("type") == "cve" and item.get("cve_id"): all_vals.add(item["cve_id"])
+        
+        # 3. Nettoyage récursif du contexte (Copie profonde pour isolation)
+        ctx = item.get("context")
+        cleaned_ctx = {}
+        if ctx and isinstance(ctx, dict):
+            # Sanitize d'abord (enlève les champs lourds)
+            sanitized = self._sanitize_context(ctx)
+            # Puis nettoie récursivement les valeurs d'IOC
+            cleaned_ctx = self._clean_recursive(sanitized, all_vals)
+        elif ctx and isinstance(ctx, str):
+            # Si c'est une string, on ne peut pas vraiment nettoyer récursivement 
+            # sans risquer de casser le contenu, mais on suit la règle simple :
+            cleaned_ctx = "[REDACTED]" if ctx.strip() in all_vals else ctx
+
+        # 4. Construction des objets finaux avec le contexte nettoyé
+        res_iocs = [self._build_ioc_object(ioc["value"], ioc["ioc_type"], source, item, cleaned_ctx) for ioc in iocs_reg]
+        res_cves = [self._build_cve_object(cid, source, item, cleaned_ctx) for cid in cves_reg]
+        
+        for ioc in item.get("raw_iocs", []):
+            if isinstance(ioc, dict) and ioc.get("value"):
+                res_iocs.append(self._build_ioc_object(ioc["value"], ioc.get("ioc_type", "unknown"), source, item, cleaned_ctx))
+            elif isinstance(ioc, str) and ioc.strip():
+                res_iocs.append(self._build_ioc_object(ioc.strip(), "unknown", source, item, cleaned_ctx))
+                
+        for cid in item.get("raw_cves", []):
+            if isinstance(cid, str) and cid.strip():
+                res_cves.append(self._build_cve_object(cid.strip(), source, item, cleaned_ctx))
+        
+        if item.get("type") == "cve" and item.get("cve_id"):
+            res_cves.append(self._build_cve_object(item["cve_id"], source, item, cleaned_ctx))
             
-            if not isinstance(item, dict):
-                continue
+        return {"iocs": res_iocs, "cves": res_cves}
 
-            # --- Filtrage des sources ---
-            raw_source = item.get("source", "unknown")
-            source = self.normalize_source_name(raw_source)
+    @staticmethod
+    def merge_two_iocs(i1: dict, i2: dict) -> dict:
+        """Fusion unifiée des IOC selon les règles métier."""
+        # Unicité garantie par (value, ioc_type) via run_regex_extractor
+        i1["sources"] = list(set(i1.get("sources", [])) | set(i2.get("sources", [])))
+        i1["sources"].sort()
+        
+        i1["tags"] = list(set(i1.get("tags", [])) | set(i2.get("tags", [])))
+        i1["tags"].sort()
+        
+        # Dates (min/max)
+        for f, op in [("first_seen", min), ("last_seen", max)]:
+            v1, v2 = i1.get(f), i2.get(f)
+            if v1 and v2: i1[f] = op(v1, v2)
+            elif v2: i1[f] = v2
+            
+        i1["confidence"] = max(i1.get("confidence") or 0, i2.get("confidence") or 0)
+        if not i1["confidence"]: i1["confidence"] = None
+        
+        # Contextes (Liste d'objets uniques)
+        for ctx in i2.get("contexts", []):
+            if ctx and isinstance(ctx, dict) and ctx not in i1["contexts"]:
+                i1["contexts"].append(ctx)
+                
+        return i1
 
-            # Seules les sources réservées au NLP sont exclues. 
-            # Toutes les autres sources sont traitées par Regex.
-            if source in NLP_RESERVED_SOURCES:
-                continue
-
-            # Toutes les autres sources → traitées par Regex.
-
-            item_type = item.get("type", "")
-            # --- Collecte des textes ---
-            full_text = self._collect_texts(item)
-
-            # --- Extraction par regex ---
-            extracted_iocs = self.extract_iocs_from_text(full_text)
-            extracted_cves = self.extract_cves_from_text(full_text)
-
-            # --- Fusion avec les données existantes ---
-            merged_iocs = self.merge_iocs(
-                existing_raw=item.get("raw_iocs") or [],
-                extracted=extracted_iocs,
-            )
-            merged_cves = self.merge_cves(
-                existing_raw=item.get("raw_cves") or [],
-                extracted=extracted_cves,
-            )
-
-            logging.debug(
-                "[%s | %s] IOC extraits=%d fusionnés=%d | CVE extraits=%d fusionnés=%d",
-                source,
-                item_type,
-                len(extracted_iocs),
-                len(merged_iocs),
-                len(extracted_cves),
-                len(merged_cves),
-            )
-
-            # --- Routage vers la liste appropriée ---
-            if item_type == "cve":
-                # L'objet d'origine est une CVE → les CVE extraites
-                # enrichissent cet objet
-                # Les IOC trouvés dans le texte sont aussi produits
-                # en tant qu'objets IOC séparés
-
-                # Objet CVE enrichi (basé sur cve_id de l'original ou
-                # sur les CVE extraites)
-                original_cve_id = item.get("cve_id")
-                cves_to_emit: list[str] = list(
-                    {original_cve_id} | set(merged_cves)
-                    if original_cve_id else set(merged_cves)
-                )
-
-                for cve_id in cves_to_emit:
-                    if not cve_id:
-                        continue
-                    norm_id = cve_id.strip().upper()
-                    if norm_id not in seen_cves:
-                        seen_cves.add(norm_id)
-                        result_cves.append(
-                            self._build_cve_object(
-                                original=item,
-                                cve_id=norm_id,
-                            )
-                        )
-
-                # IOC trouvés dans le texte d'une CVE
-                for ioc_entry in merged_iocs:
-                    key = (ioc_entry["value"], ioc_entry["ioc_type"])
-                    if key not in seen_iocs:
-                        seen_iocs.add(key)
-                        result_iocs.append(
-                            self._build_ioc_object(
-                                original=item,
-                                ioc_entry=ioc_entry,
-                            )
-                        )
-
-            else:
-                # L'objet d'origine est un IOC (ou un bulletin)
-                # Les IOC extraits/fusionnés → liste iocs
-                # Les CVE extraites → liste cves
-
-                for ioc_entry in merged_iocs:
-                    key = (ioc_entry["value"], ioc_entry["ioc_type"])
-                    if key not in seen_iocs:
-                        seen_iocs.add(key)
-                        result_iocs.append(
-                            self._build_ioc_object(
-                                original=item,
-                                ioc_entry=ioc_entry,
-                            )
-                        )
-
-                for cve_id in merged_cves:
-                    norm_id = cve_id.strip().upper()
-                    if norm_id not in seen_cves:
-                        seen_cves.add(norm_id)
-                        result_cves.append(
-                            self._build_cve_object(
-                                original=item,
-                                cve_id=norm_id,
-                            )
-                        )
-
-        logging.info(
-            "RegexExtractor terminé : %d IOC | %d CVE produits.",
-            len(result_iocs),
-            len(result_cves),
-        )
-
-        return {"iocs": result_iocs, "cves": result_cves}
+    @staticmethod
+    def merge_two_cves(c1: dict, c2: dict) -> dict:
+        """Fusion unifiée des CVE selon les règles métier."""
+        c1["sources"] = list(set(c1.get("sources", [])) | set(c2.get("sources", [])))
+        c1["sources"].sort()
+        
+        # CVSS (Union sécurisée pour les objets dict)
+        for val in (c2.get("cvss") or []):
+            if val not in c1["cvss"]:
+                c1["cvss"].append(val)
+        
+        # Sévérité & Date (La plus informative/pertinente)
+        if not c1.get("severity") and c2.get("severity"): c1["severity"] = c2["severity"]
+        if not c1.get("published_date") and c2.get("published_date"): c1["published_date"] = c2["published_date"]
+        
+        # Contextes
+        for ctx in c2.get("contexts", []):
+            if ctx and isinstance(ctx, dict) and ctx not in c1["contexts"]:
+                c1["contexts"].append(ctx)
+                
+        return c1
