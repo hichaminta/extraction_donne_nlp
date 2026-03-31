@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Direct JSON CTI Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div id="loading-overlay">
+        <div class="loader-content">
+            <i data-lucide="loader-2" class="spin"></i>
+            <p>Loading 500MB+ JSON Data... This may take a minute.</p>
+            <sub id="loading-status">Fetching repositories...</sub>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo">
+                <i data-lucide="shield-alert"></i>
+                <span>CTI Shield</span>
+            </div>
+            <nav>
+                <ul>
+                    <li class="active" data-section="overview"><i data-lucide="layout-dashboard"></i> Overview</li>
+                    <li data-section="iocs"><i data-lucide="binary"></i> IOCs</li>
+                    <li data-section="cves"><i data-lucide="bug"></i> CVEs</li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="content">
+            <header>
+                <h1 id="section-title">Overview</h1>
+                <div class="header-actions">
+                    <span id="last-updated">Status: Live Data</span>
+                </div>
+            </header>
+
+            <section id="overview" class="dashboard-section active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i data-lucide="database"></i></div>
+                        <div class="stat-info">
+                            <h3>Total IOCs</h3>
+                            <p id="total-iocs">Counting...</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i data-lucide="alert-triangle"></i></div>
+                        <div class="stat-info">
+                            <h3>Total CVEs</h3>
+                            <p id="total-cves">Counting...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <h3>Indicator Distribution</h3>
+                        <canvas id="iocDistributionChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Historical Trends</h3>
+                        <canvas id="cveTrendChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <section id="iocs" class="dashboard-section">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Indicators of Compromise</h3>
+                        <input type="text" id="iocSearch" placeholder="Search by value or type...">
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Value</th>
+                                <th>Type</th>
+                                <th>Sources</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="iocTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="cves" class="dashboard-section">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Recent CVEs</h3>
+                        <input type="text" id="cveSearch" placeholder="Search CVEs...">
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>CVE ID</th>
+                                <th>Year</th>
+                                <th>Modified</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cveTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- IOC Detail Modal -->
+    <div id="ioc-modal" class="modal">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>Indicator Details</h2>
+                <button id="close-modal">&times;</button>
+            </header>
+            <div id="modal-body" class="modal-body">
+                <!-- Dynamic content will go here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Logic built to handle local paths relative to server root -->
+    <script src="script.js"></script>
+</body>
+</html>

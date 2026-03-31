@@ -46,9 +46,9 @@ def main():
                 
                 res = extractor.process_single_item(item)
                 
-                # Fusion des IOC : (value, ioc_type)
+                # Fusion des IOC : par 'value' (indépendamment du type)
                 for ioc in res["iocs"]:
-                    key = (ioc["value"], ioc["ioc_type"])
+                    key = ioc["value"]
                     if key in all_iocs_dict:
                         all_iocs_dict[key] = extractor.merge_two_iocs(all_iocs_dict[key], ioc)
                     else:

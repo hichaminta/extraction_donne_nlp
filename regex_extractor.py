@@ -39,6 +39,7 @@ class RegexExtractor:
         seen = set()
         def _add(v, t):
             v_s = v.strip()
+            if t == "domain": v_s = v_s.lower()
             if (v_s, t) not in seen and v_s:
                 seen.add((v_s, t)); found.append((v_s, t))
         
@@ -118,22 +119,23 @@ class RegexExtractor:
     def _build_ioc_object(self, value: str, ioc_type: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
         """Format final léger IOC (SANS raw_text/description/raw_iocs)"""
         ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
+        tags = list(item.get("tags") or [])
         return {
             "type": "ioc",
-            "value": value,
+            "value": value.lower() if ioc_type == "domain" else value,
             "ioc_type": ioc_type,
             "sources": [source] if source else [],
-            "tags": list(item.get("tags") or []),
+            "tags": tags if tags else None,
             "first_seen": item.get("first_seen"),
             "last_seen": item.get("last_seen"),
             "confidence": item.get("confidence"),
-            "contexts": [ctx] if ctx else []
+            "contexts": [ctx] if ctx else None
         }
 
     def _build_cve_object(self, cve_id: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
         """Format final léger CVE (SANS raw_text/description/raw_cves)"""
         ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
-        # Normalisation CVSS pour être toujours une liste
+        # Normalisation CVSS pour être toujours une liste ou None
         cvss = item.get("cvss")
         if cvss is None:
             cvss_list = []
@@ -144,12 +146,12 @@ class RegexExtractor:
             
         return {
             "type": "cve",
-            "cve_id": cve_id,
+            "cve_id": cve_id.upper().strip(),
             "sources": [source] if source else [],
             "severity": item.get("severity"),
-            "cvss": cvss_list,
+            "cvss": cvss_list if cvss_list else None,
             "published_date": item.get("published_date"),
-            "contexts": [ctx] if ctx else []
+            "contexts": [ctx] if ctx else None
         }
 
     def process_single_item(self, item: dict) -> dict:
@@ -208,12 +210,19 @@ class RegexExtractor:
     @staticmethod
     def merge_two_iocs(i1: dict, i2: dict) -> dict:
         """Fusion unifiée des IOC selon les règles métier."""
-        # Unicité garantie par (value, ioc_type) via run_regex_extractor
-        i1["sources"] = list(set(i1.get("sources", [])) | set(i2.get("sources", [])))
+        # Unicité garantie par le 'value' via run_regex_extractor
+        
+        # Fusion du type d'IOC (on préfère un type spécifique à 'unknown')
+        t1, t2 = i1.get("ioc_type", "unknown"), i2.get("ioc_type", "unknown")
+        if t1 == "unknown" and t2 != "unknown":
+            i1["ioc_type"] = t2
+            
+        i1["sources"] = list(set(i1.get("sources") or []) | set(i2.get("sources") or []))
         i1["sources"].sort()
         
-        i1["tags"] = list(set(i1.get("tags", [])) | set(i2.get("tags", [])))
-        i1["tags"].sort()
+        tags = list(set(i1.get("tags") or []) | set(i2.get("tags") or []))
+        tags.sort()
+        i1["tags"] = tags if tags else None
         
         # Dates (min/max)
         for f, op in [("first_seen", min), ("last_seen", max)]:
@@ -225,28 +234,39 @@ class RegexExtractor:
         if not i1["confidence"]: i1["confidence"] = None
         
         # Contextes (Liste d'objets uniques)
-        for ctx in i2.get("contexts", []):
-            if ctx and isinstance(ctx, dict) and ctx not in i1["contexts"]:
-                i1["contexts"].append(ctx)
+        c1 = i1.get("contexts") or []
+        for ctx in i2.get("contexts") or []:
+            if ctx and isinstance(ctx, dict) and ctx not in c1:
+                c1.append(ctx)
+        i1["contexts"] = c1 if c1 else None
                 
         return i1
 
     @staticmethod
     def merge_two_cves(c1: dict, c2: dict) -> dict:
         """Fusion unifiée des CVE selon les règles métier."""
-        c1["sources"] = list(set(c1.get("sources", [])) | set(c2.get("sources", [])))
+        c1["sources"] = list(set(c1.get("sources") or []) | set(c2.get("sources") or []))
         c1["sources"].sort()
         
         # CVSS (Union sécurisée pour les objets dict)
+        cvss1 = c1.get("cvss") or []
         for val in (c2.get("cvss") or []):
-            if val not in c1["cvss"]:
-                c1["cvss"].append(val)
+            if val not in cvss1:
+                cvss1.append(val)
+        c1["cvss"] = cvss1 if cvss1 else None
         
         # Sévérité & Date (La plus informative/pertinente)
         if not c1.get("severity") and c2.get("severity"): c1["severity"] = c2["severity"]
         if not c1.get("published_date") and c2.get("published_date"): c1["published_date"] = c2["published_date"]
         
         # Contextes
+        ctx1 = c1.get("contexts") or []
+        for ctx in c2.get("contexts") or []:
+            if ctx and isinstance(ctx, dict) and ctx not in ctx1:
+                ctx1.append(ctx)
+        c1["contexts"] = ctx1 if ctx1 else None
+                
+        return c1
         for ctx in c2.get("contexts", []):
             if ctx and isinstance(ctx, dict) and ctx not in c1["contexts"]:
                 c1["contexts"].append(ctx)
