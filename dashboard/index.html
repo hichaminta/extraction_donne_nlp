@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Direct JSON CTI Dashboard</title>
+    <title>CTI Shield – Threat Intelligence Dashboard</title>
+    <meta name="description" content="Cyber Threat Intelligence dashboard for IOC and CVE analysis.">
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -13,7 +14,7 @@
     <div id="loading-overlay">
         <div class="loader-content">
             <i data-lucide="loader-2" class="spin"></i>
-            <p>Loading 500MB+ JSON Data... This may take a minute.</p>
+            <p>Loading 500MB+ JSON Data… This may take a minute.</p>
             <sub id="loading-status">Fetching repositories...</sub>
         </div>
     </div>
@@ -41,23 +42,41 @@
                 </div>
             </header>
 
+            <!-- ── Overview ── -->
             <section id="overview" class="dashboard-section active">
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-icon"><i data-lucide="database"></i></div>
+                        <div class="stat-icon" style="background:rgba(47,128,237,0.12);color:#60a5fa"><i data-lucide="database"></i></div>
                         <div class="stat-info">
                             <h3>Total IOCs</h3>
                             <p id="total-iocs">Counting...</p>
                         </div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-icon"><i data-lucide="alert-triangle"></i></div>
+                        <div class="stat-icon" style="background:rgba(155,81,224,0.12);color:#c084fc"><i data-lucide="bug"></i></div>
                         <div class="stat-info">
                             <h3>Total CVEs</h3>
                             <p id="total-cves">Counting...</p>
                         </div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-icon" style="background:rgba(39,174,96,0.12);color:#34d399"><i data-lucide="server"></i></div>
+                        <div class="stat-info">
+                            <h3>Sources IOC</h3>
+                            <p id="total-ioc-sources">Counting...</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon" style="background:rgba(242,153,74,0.12);color:#fb923c"><i data-lucide="server"></i></div>
+                        <div class="stat-info">
+                            <h3>Sources CVE</h3>
+                            <p id="total-cve-sources">Counting...</p>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- IOC Types breakdown -->
+                <div class="type-breakdown-row" id="typeBreakdownRow"></div>
 
                 <div class="charts-grid">
                     <div class="chart-container">
@@ -65,17 +84,49 @@
                         <canvas id="iocDistributionChart"></canvas>
                     </div>
                     <div class="chart-container">
-                        <h3>Historical Trends</h3>
+                        <h3>Historical Trends (CVE)</h3>
                         <canvas id="cveTrendChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Sources bar chart row -->
+                <div class="charts-grid" style="grid-template-columns:1fr 1fr;margin-top:0;">
+                    <div class="chart-container">
+                        <h3>Top IOC Sources</h3>
+                        <canvas id="iocSourcesChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Top CVE Sources</h3>
+                        <canvas id="cveSourcesChart"></canvas>
                     </div>
                 </div>
             </section>
 
+            <!-- ── IOCs ── -->
             <section id="iocs" class="dashboard-section">
+
+                <!-- Search + results count -->
+                <div class="ioc-toolbar">
+                    <input type="text" id="iocSearch" placeholder="🔍  Search by value, type, source or tag…">
+                    <span id="iocResultsCount" class="results-count"></span>
+                </div>
+
+                <!-- Type filter bar -->
+                <div class="filter-section">
+                    <span class="filter-label">Type</span>
+                    <div id="typeFilterBar" class="filter-bar"></div>
+                </div>
+
+                <!-- Source filter bar -->
+                <div class="filter-section">
+                    <span class="filter-label">Source</span>
+                    <div id="sourceFilterBar" class="filter-bar"></div>
+                </div>
+
+                <!-- Table -->
                 <div class="table-container">
                     <div class="table-header">
                         <h3>Indicators of Compromise</h3>
-                        <input type="text" id="iocSearch" placeholder="Search by value or type...">
                     </div>
                     <table>
                         <thead>
@@ -83,50 +134,77 @@
                                 <th>#</th>
                                 <th>Value</th>
                                 <th>Type</th>
+                                <th>Ports</th>
                                 <th>Sources</th>
-                                <th>Details</th>
+                                <th>Tags</th>
                             </tr>
                         </thead>
                         <tbody id="iocTableBody"></tbody>
                     </table>
                 </div>
+
+                <!-- Paginator -->
+                <div id="iocPaginator" class="paginator"></div>
+
             </section>
 
+            <!-- ── CVEs ── -->
             <section id="cves" class="dashboard-section">
+
+                <!-- Search + results count -->
+                <div class="ioc-toolbar">
+                    <input type="text" id="cveSearch" placeholder="🔍  Rechercher par CVE ID, sévérité ou source…">
+                    <span id="cveResultsCount" class="results-count"></span>
+                </div>
+
                 <div class="table-container">
                     <div class="table-header">
-                        <h3>Recent CVEs</h3>
-                        <input type="text" id="cveSearch" placeholder="Search CVEs...">
+                        <h3>CVE Vulnerabilities</h3>
                     </div>
                     <table>
                         <thead>
                             <tr>
+                                <th>#</th>
                                 <th>CVE ID</th>
                                 <th>Year</th>
-                                <th>Modified</th>
+                                <th>Severity</th>
+                                <th>Sources</th>
+                                <th>Published</th>
                             </tr>
                         </thead>
                         <tbody id="cveTableBody"></tbody>
                     </table>
                 </div>
+
+                <!-- CVE Paginator -->
+                <div id="cvePaginator" class="paginator"></div>
+
             </section>
         </main>
     </div>
 
-    <!-- IOC Detail Modal -->
+    <!-- ── IOC Detail Modal ── -->
     <div id="ioc-modal" class="modal">
         <div class="modal-content">
             <header class="modal-header">
                 <h2>Indicator Details</h2>
                 <button id="close-modal">&times;</button>
             </header>
-            <div id="modal-body" class="modal-body">
-                <!-- Dynamic content will go here -->
-            </div>
+            <div id="modal-body" class="modal-body"></div>
         </div>
     </div>
 
-    <!-- Logic built to handle local paths relative to server root -->
+    <!-- ── CVE Detail Modal ── -->
+    <div id="cve-modal" class="modal">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>CVE Details</h2>
+                <button id="close-cve-modal">&times;</button>
+            </header>
+            <div id="cve-modal-body" class="modal-body"></div>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>

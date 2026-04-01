@@ -17,9 +17,10 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 NLP_RESERVED_SOURCES = {"dgssi", "otx alienvault", "pulsedive"}
 
 # Patterns regex
-_IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\b")
+_IPV4_BASE = r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)"
+_IP_WITH_PORT = re.compile(f"\\b({_IPV4_BASE})(?::([0-9]{{1,5}}))?\\b")
 _URL = re.compile(r"https?://[^\s\"'<>\]\[}{|\\^`]+|ftp://[^\s\"'<>\]\[}{|\\^`]+")
-_DOMAIN = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|gov|edu|mil|int|info|biz|mobi|name|museum|co|de|fr|uk|us|ru|cn|jp|br|in|ma|eu|be|nl|es|it|pl|se|ch|au|ca|nz|sg|hk|za|ar|mx|tr|ua|ro|cz|hu|gr|fi|no|dk|pt|at|onion|xyz|top|app|dev|cloud|site|tech|club|shop|online|pro|click|stream|zip|mov|review)\b", re.IGNORECASE)
+_DOMAIN = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|gov|edu|mil|int|info|biz|mobi|name|museum|co|de|fr|uk|us|ru|cn|jp|br|in|ma|eu|be|nl|es|it|pl|se|ch|au|ca|nz|sg|hk|za|ar|mx|tr|ua|ro|cz|hu|gr|fi|no|dk|pt|at|onion|xyz|top|app|dev|cloud|site|tech|club|shop|online|pro|click|stream|zip|mov|review|cc|pw|me|top|icu|bit|info|live|bid)\b", re.IGNORECASE)
 _EMAIL = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
 _MD5 = re.compile(r"\b[0-9a-fA-F]{32}\b")
 _SHA1 = re.compile(r"\b[0-9a-fA-F]{40}\b")
@@ -32,23 +33,55 @@ class RegexExtractor:
         if not source: return ""
         return str(source).strip().lower()
 
+    @staticmethod
+    def _normalize_cve(cve: str) -> str:
+        if not cve: return ""
+        v = cve.upper().strip()
+        if not v.startswith("CVE-"):
+            if re.match(r"\d{4}-\d{4,}", v): return f"CVE-{v}"
+        return v
+
     @lru_cache(maxsize=10000)
-    def extract_iocs_from_text_cached(self, text: str) -> tuple[tuple[str, str], ...]:
+    def extract_iocs_from_text_cached(self, text: str) -> tuple[dict, ...]:
         if not text or len(text) < 4: return tuple()
         found = []
         seen = set()
-        def _add(v, t):
+        
+        def _get_existing_ip(ip):
+            for f in found:
+                if f["value"] == ip and f["ioc_type"] == "ip": return f
+            return None
+
+        def _add(v, t, p=None):
             v_s = v.strip()
             if t == "domain": v_s = v_s.lower()
+            
+            # Gestion fusion ports pour IP
+            if t == "ip":
+                existing = _get_existing_ip(v_s)
+                if existing:
+                    if p:
+                        ports = list(existing.get("ports") or [])
+                        if p not in ports:
+                            ports.append(p); ports.sort()
+                            existing["ports"] = ports
+                    return
+            
             if (v_s, t) not in seen and v_s:
-                seen.add((v_s, t)); found.append((v_s, t))
+                seen.add((v_s, t))
+                ioc = {"value": v_s, "ioc_type": t}
+                if p: ioc["ports"] = [p]
+                found.append(ioc)
         
         if "://" in text:
             for m in _URL.finditer(text): _add(m.group(), "url")
         if "@" in text:
             for m in _EMAIL.finditer(text): _add(m.group(), "email")
         if "." in text:
-            for m in _IPV4.finditer(text): _add(m.group(), "ip")
+            for m in _IP_WITH_PORT.finditer(text):
+                ip_part = m.group(1)
+                port_part = m.group(2)
+                _add(ip_part, "ip", port_part)
         if len(text) >= 32:
             for m in _SHA256.finditer(text): _add(m.group(), "sha256")
             for m in _SHA1.finditer(text):
@@ -58,16 +91,19 @@ class RegexExtractor:
         if "." in text:
             for m in _DOMAIN.finditer(text):
                 v = m.group()
-                if not any(v in f[0] for f in found if f[1] in ("url", "email")): _add(v, "domain")
+                if not any(v in f["value"] for f in found if f["ioc_type"] in ("url", "email")): _add(v, "domain")
         return tuple(found)
 
     def extract_iocs_from_text(self, text: str) -> list[dict]:
-        return [{"value": v, "ioc_type": t} for v, t in self.extract_iocs_from_text_cached(text)]
+        return list(copy.deepcopy(self.extract_iocs_from_text_cached(text)))
 
     @lru_cache(maxsize=10000)
     def extract_cves_from_text_cached(self, text: str) -> tuple[str, ...]:
-        if not text or "CVE-" not in text.upper(): return tuple()
-        return tuple({m.group().upper().strip() for m in _CVE_PAT.finditer(text)})
+        if not text: return tuple()
+        upper_text = text.upper()
+        # Chercher CVE-XXXX-XXXXX ou juste XXXX-XXXXX si contextuel
+        cves = {self._normalize_cve(m.group()) for m in _CVE_PAT.finditer(text)}
+        return tuple(sorted(cves))
 
     def extract_cves_from_text(self, text: str) -> list[str]:
         return list(self.extract_cves_from_text_cached(text))
@@ -96,10 +132,10 @@ class RegexExtractor:
         if isinstance(data, str):
             return "[IOC_VALUE]" if data.strip() in values_to_remove else data
         if isinstance(data, list):
-            return [v for v in data if v not in values_to_remove]
+            return [self._clean_recursive(v, values_to_remove) for v in data]
         if isinstance(data, dict):
-            # On ne nettoie que les valeurs de premier niveau pour la performance
-            return {k: ("[IOC_VALUE]" if isinstance(v, str) and v.strip() in values_to_remove else v) 
+            # Ne pas masquer cve_id pour garder la visibilité metadata
+            return {k: (v if k == "cve_id" else self._clean_recursive(v, values_to_remove)) 
                     for k, v in data.items()}
         return data
 
@@ -116,7 +152,7 @@ class RegexExtractor:
         }
         return {k: v for k, v in ctx.items() if k not in blacklist}
 
-    def _build_ioc_object(self, value: str, ioc_type: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
+    def _build_ioc_object(self, value: str, ioc_type: str, source: str, item: dict, cleaned_ctx: dict = None, ports: list = None) -> dict:
         """Format final léger IOC (SANS raw_text/description/raw_iocs)"""
         ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
         tags = list(item.get("tags") or [])
@@ -124,6 +160,7 @@ class RegexExtractor:
             "type": "ioc",
             "value": value.lower() if ioc_type == "domain" else value,
             "ioc_type": ioc_type,
+            "ports": list(set(ports)) if ports else None,
             "sources": [source] if source else [],
             "tags": tags if tags else None,
             "first_seen": item.get("first_seen"),
@@ -135,6 +172,7 @@ class RegexExtractor:
     def _build_cve_object(self, cve_id: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
         """Format final léger CVE (SANS raw_text/description/raw_cves)"""
         ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
+        normalized_id = self._normalize_cve(cve_id)
         # Normalisation CVSS pour être toujours une liste ou None
         cvss = item.get("cvss")
         if cvss is None:
@@ -146,7 +184,7 @@ class RegexExtractor:
             
         return {
             "type": "cve",
-            "cve_id": cve_id.upper().strip(),
+            "cve_id": normalized_id,
             "sources": [source] if source else [],
             "severity": item.get("severity"),
             "cvss": cvss_list if cvss_list else None,
@@ -189,9 +227,16 @@ class RegexExtractor:
             cleaned_ctx = "[REDACTED]" if ctx.strip() in all_vals else ctx
 
         # 4. Construction des objets finaux avec le contexte nettoyé
-        res_iocs = [self._build_ioc_object(ioc["value"], ioc["ioc_type"], source, item, cleaned_ctx) for ioc in iocs_reg]
+        res_iocs = [self._build_ioc_object(ioc["value"], ioc["ioc_type"], source, item, cleaned_ctx, ioc.get("ports")) for ioc in iocs_reg]
         res_cves = [self._build_cve_object(cid, source, item, cleaned_ctx) for cid in cves_reg]
         
+        # 5. Récupération CVE ID direct du contexte ou de l'item top-level
+        cve_from_meta = item.get("cve_id")
+        if not cve_from_meta and isinstance(item.get("context"), dict):
+            cve_from_meta = item["context"].get("cve_id")
+        if cve_from_meta:
+            res_cves.append(self._build_cve_object(cve_from_meta, source, item, cleaned_ctx))
+
         for ioc in item.get("raw_iocs", []):
             if isinstance(ioc, dict) and ioc.get("value"):
                 res_iocs.append(self._build_ioc_object(ioc["value"], ioc.get("ioc_type", "unknown"), source, item, cleaned_ctx))
@@ -201,9 +246,6 @@ class RegexExtractor:
         for cid in item.get("raw_cves", []):
             if isinstance(cid, str) and cid.strip():
                 res_cves.append(self._build_cve_object(cid.strip(), source, item, cleaned_ctx))
-        
-        if item.get("type") == "cve" and item.get("cve_id"):
-            res_cves.append(self._build_cve_object(item["cve_id"], source, item, cleaned_ctx))
             
         return {"iocs": res_iocs, "cves": res_cves}
 
@@ -239,6 +281,13 @@ class RegexExtractor:
             if ctx and isinstance(ctx, dict) and ctx not in c1:
                 c1.append(ctx)
         i1["contexts"] = c1 if c1 else None
+
+        # Fusion des ports
+        p1 = set(i1.get("ports") or [])
+        p2 = set(i2.get("ports") or [])
+        merged_ports = list(p1 | p2)
+        merged_ports.sort()
+        i1["ports"] = merged_ports if merged_ports else None
                 
         return i1
 
