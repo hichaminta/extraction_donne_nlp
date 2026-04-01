@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import logging
 from adapters import (
@@ -27,13 +28,23 @@ def load_data(file_path):
                 
                 # Gestion des structures par source
                 if isinstance(data, dict):
-                    # Spamhaus a ses données dans 'iocs'
                     if 'iocs' in data:
                         return data['iocs']
-                    # Notre nouveau fichier NVD a ses données dans 'cves'
                     if 'cves' in data:
-                        # On retourne la liste des valeurs du dictionnaire
                         return list(data['cves'].values())
+                    
+                    # Cas général d'id mapping (ex: URLHaus)
+                    # Si toutes les valeurs sont des listes, on les aplatit
+                    first_value = next(iter(data.values())) if data else None
+                    if isinstance(first_value, list):
+                        all_items = []
+                        for val in data.values():
+                            if isinstance(val, list):
+                                all_items.extend(val)
+                            else:
+                                all_items.append(val)
+                        return all_items
+                    
                     return [data]
                 
                 return data if isinstance(data, list) else [data]
@@ -41,26 +52,33 @@ def load_data(file_path):
         logging.error(f"Erreur lors du chargement de {file_path} : {e}")
         return []
 
-def run_all_adapters():
+def run_all_adapters(target_source=None):
     """Exécute tous les adapters sur les sources disponibles."""
     
     # Mapping entre fichiers sources et classes d'adapters
     sources_config = [
-        {"path": "Cert/dgssi_bulletins.jsonl", "adapter": DgssiAdapter(), "name": "dgssi"},
-        {"path": "ThreatFox/threatfox_data.json", "adapter": ThreatfoxAdapter(), "name": "threatfox"},
-        {"path": "AbuseIPDB/abuseipdb_data.json", "adapter": AbuseipdbAdapter(), "name": "abuseipdb"},
-        {"path": "CINS Army/cins_army.json", "adapter": CinsAdapter(), "name": "cins_army"},
-        {"path": "MalwareBazaar Community API/malwarebazaar_data.json", "adapter": MalwarebazaarAdapter(), "name": "malwarebazaar"},
-        {"path": "OpenPhish/openphish_data.json", "adapter": OpenphishAdapter(), "name": "openphish"},
-        {"path": "PhishTank/verified_online.json", "adapter": PhishtankAdapter(), "name": "phishtank"},
-        {"path": "VirusTotal/virustotal_enrichment.json", "adapter": VirustotalAdapter(), "name": "virustotal"},
-        {"path": "feodotracker/feodo_data.json", "adapter": FeodotrackerAdapter(), "name": "feodotracker"},
-        {"path": "pulsedive/pulsedive_iocs.json", "adapter": PulsediveAdapter(), "name": "pulsedive"},
-        {"path": "Spamhaus/spamhaus_data.json", "adapter": SpamhausAdapter(), "name": "spamhaus"},
-        {"path": "url/urlhaus_full.json", "adapter": UrlhausAdapter(), "name": "urlhaus"},
-        # {"path": "Otx alienvault/otx_pulses.json", "adapter": OtxAdapter(), "name": "otx_alienvault"},
-        {"path": "nvd_cisa/cve_data_exploited.json", "adapter": NvdAdapter(), "name": "nvd"},
+        {"path": "Sources_data/dgssi/dgssi_bulletins.jsonl", "adapter": DgssiAdapter(), "name": "dgssi"},
+        {"path": "Sources_data/ThreatFox/threatfox_data.json", "adapter": ThreatfoxAdapter(), "name": "threatfox"},
+        {"path": "Sources_data/AbuseIPDB/abuseipdb_data.json", "adapter": AbuseipdbAdapter(), "name": "abuseipdb"},
+        {"path": "Sources_data/CINS Army/cins_army.json", "adapter": CinsAdapter(), "name": "cins_army"},
+        {"path": "Sources_data/MalwareBazaar Community API/malwarebazaar_data.json", "adapter": MalwarebazaarAdapter(), "name": "malwarebazaar"},
+        {"path": "Sources_data/OpenPhish/openphish_data.json", "adapter": OpenphishAdapter(), "name": "openphish"},
+        {"path": "Sources_data/PhishTank/verified_online.json", "adapter": PhishtankAdapter(), "name": "phishtank"},
+        {"path": "Sources_data/VirusTotal/virustotal_enrichment.json", "adapter": VirustotalAdapter(), "name": "virustotal"},
+        {"path": "Sources_data/feodotracker/feodo_data.json", "adapter": FeodotrackerAdapter(), "name": "feodotracker"},
+        {"path": "Sources_data/pulsedive/pulsedive_iocs.json", "adapter": PulsediveAdapter(), "name": "pulsedive"},
+        {"path": "Sources_data/Spamhaus/spamhaus_data.json", "adapter": SpamhausAdapter(), "name": "spamhaus"},
+        {"path": "Sources_data/url/urlhaus_full.json", "adapter": UrlhausAdapter(), "name": "urlhaus"},
+        # {"path": "Sources_data/Otx alienvault/otx_pulses.json", "adapter": OtxAdapter(), "name": "otx_alienvault"},
+        {"path": "Sources_data/nvd_cisa/cve_data_exploited.json", "adapter": NvdAdapter(), "name": "nvd"},
     ]
+
+    # Filtrage si une source spécifique est demandée
+    if target_source:
+        sources_config = [s for s in sources_config if s["name"] == target_source]
+        if not sources_config:
+            logging.error(f"Adapter '{target_source}' non trouvé dans la configuration.")
+            return
 
     # Dossier de sortie
     output_dir = "output_adapters"
@@ -101,4 +119,6 @@ def run_all_adapters():
     logging.info(f"TERMINE : Tous les adapters ont été exécutés. Résultats dans {output_dir}/")
 
 if __name__ == "__main__":
-    run_all_adapters()
+    import sys
+    source_to_run = sys.argv[1] if len(sys.argv) > 1 else None
+    run_all_adapters(source_to_run)

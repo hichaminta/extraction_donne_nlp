@@ -170,7 +170,7 @@ class RegexExtractor:
         }
 
     def _build_cve_object(self, cve_id: str, source: str, item: dict, cleaned_ctx: dict = None) -> dict:
-        """Format final léger CVE (SANS raw_text/description/raw_cves)"""
+        """Format final léger CVE (SANS raw_text/raw_cves). description sera enrichie par NVD."""
         ctx = cleaned_ctx if cleaned_ctx is not None else self._sanitize_context(item.get("context"))
         normalized_id = self._normalize_cve(cve_id)
         # Normalisation CVSS pour être toujours une liste ou None
@@ -181,10 +181,14 @@ class RegexExtractor:
             cvss_list = cvss
         else:
             cvss_list = [cvss]
-            
+
+        # Description : récupère depuis l'item si déjà présente (sinon NVD comblera)
+        description = item.get("description") or None
+
         return {
             "type": "cve",
             "cve_id": normalized_id,
+            "description": description,
             "sources": [source] if source else [],
             "severity": item.get("severity"),
             "cvss": cvss_list if cvss_list else None,
@@ -230,13 +234,28 @@ class RegexExtractor:
         res_iocs = [self._build_ioc_object(ioc["value"], ioc["ioc_type"], source, item, cleaned_ctx, ioc.get("ports")) for ioc in iocs_reg]
         res_cves = [self._build_cve_object(cid, source, item, cleaned_ctx) for cid in cves_reg]
         
-        # 5. Récupération CVE ID direct du contexte ou de l'item top-level
+        # 5. Récupération Directe depuis l'item (Cas où l'adapter fournit déjà une structure IOC/CVE)
+        # Gestion top-level IOC
+        if item.get("type") == "ioc" and item.get("value"):
+            res_iocs.append(self._build_ioc_object(
+                item["value"], 
+                item.get("ioc_type", "unknown"), 
+                source, item, cleaned_ctx, 
+                item.get("ports")
+            ))
+            
+        # Gestion top-level CVE
+        if item.get("type") == "cve" and item.get("cve_id"):
+            res_cves.append(self._build_cve_object(item["cve_id"], source, item, cleaned_ctx))
+
+        # 6. Récupération CVE ID depuis le contexte ou métadonnées directes
         cve_from_meta = item.get("cve_id")
         if not cve_from_meta and isinstance(item.get("context"), dict):
             cve_from_meta = item["context"].get("cve_id")
         if cve_from_meta:
             res_cves.append(self._build_cve_object(cve_from_meta, source, item, cleaned_ctx))
 
+        # 7. Collecte des raw_iocs et raw_cves (historique/legacy)
         for ioc in item.get("raw_iocs", []):
             if isinstance(ioc, dict) and ioc.get("value"):
                 res_iocs.append(self._build_ioc_object(ioc["value"], ioc.get("ioc_type", "unknown"), source, item, cleaned_ctx))
@@ -296,28 +315,27 @@ class RegexExtractor:
         """Fusion unifiée des CVE selon les règles métier."""
         c1["sources"] = list(set(c1.get("sources") or []) | set(c2.get("sources") or []))
         c1["sources"].sort()
-        
+
+        # Description : garder la première non-nulle
+        if not c1.get("description") and c2.get("description"):
+            c1["description"] = c2["description"]
+
         # CVSS (Union sécurisée pour les objets dict)
         cvss1 = c1.get("cvss") or []
         for val in (c2.get("cvss") or []):
             if val not in cvss1:
                 cvss1.append(val)
         c1["cvss"] = cvss1 if cvss1 else None
-        
+
         # Sévérité & Date (La plus informative/pertinente)
         if not c1.get("severity") and c2.get("severity"): c1["severity"] = c2["severity"]
         if not c1.get("published_date") and c2.get("published_date"): c1["published_date"] = c2["published_date"]
-        
+
         # Contextes
         ctx1 = c1.get("contexts") or []
         for ctx in c2.get("contexts") or []:
             if ctx and isinstance(ctx, dict) and ctx not in ctx1:
                 ctx1.append(ctx)
         c1["contexts"] = ctx1 if ctx1 else None
-                
-        return c1
-        for ctx in c2.get("contexts", []):
-            if ctx and isinstance(ctx, dict) and ctx not in c1["contexts"]:
-                c1["contexts"].append(ctx)
-                
+
         return c1

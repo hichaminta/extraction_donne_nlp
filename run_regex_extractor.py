@@ -40,6 +40,7 @@ def main():
             
             if not isinstance(items, list): items = [items]
             total_items = len(items)
+            total_input_count += total_items
             for j, item in enumerate(items, 1):
                 if j % 1000 == 0:
                     logging.info("  ... %d/%d items traités", j, total_items)
