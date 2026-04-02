@@ -4,14 +4,13 @@ import os
 import csv
 from datetime import datetime, timezone
 from OTXv2 import OTXv2
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_JSON = os.path.join(SCRIPT_DIR, "otx_pulses.json")
 TRACKING_FILE = os.path.join(SCRIPT_DIR, "last_run.csv")
 
-_root = os.path.dirname(SCRIPT_DIR)
-load_dotenv(os.path.join(_root, ".env"))
+load_dotenv(find_dotenv())
 
 
 def get_api_key():

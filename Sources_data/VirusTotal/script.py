@@ -8,13 +8,10 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import requests
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.dirname(SCRIPT_DIR)
-
-load_dotenv(os.path.join(ROOT_DIR, "./.env"), override=False)
+load_dotenv(find_dotenv(), override=False)
 
 API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
 OUTPUT_JSON = os.path.join(SCRIPT_DIR, "virustotal_enrichment.json")

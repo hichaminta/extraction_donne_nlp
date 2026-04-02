@@ -4,12 +4,10 @@ import time
 import os
 import csv
 from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 BASE = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-# Charge le .env racine (dossier parent)
-_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(_root, ".env"))
+load_dotenv(find_dotenv())
 API_KEY = os.getenv("NVD_API_KEY")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRACKING_FILE = os.path.join(SCRIPT_DIR, "last_run.csv")

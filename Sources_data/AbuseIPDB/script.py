@@ -3,12 +3,11 @@ import json
 import os
 import csv
 from datetime import datetime, timezone
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # Configuration
 # Charge le .env racine (dossier parent) ou le .env local en fallback
-_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(_root, ".env"))
+load_dotenv(find_dotenv())
 API_KEY = os.getenv("ABUSEIPDB_API_KEY")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_JSON = os.path.join(SCRIPT_DIR, "abuseipdb_data.json")

@@ -3,14 +3,10 @@ import json
 import os
 import csv
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-_root       = os.path.dirname(SCRIPT_DIR)
-
-# Charge le .env racine
-load_dotenv(os.path.join(_root, ".env"), override=False)
+load_dotenv(find_dotenv(), override=False)
 
 API_KEY      = os.getenv("THREATFOX_API_KEY", "")
 API_URL      = "https://threatfox-api.abuse.ch/api/v1/"

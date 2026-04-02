@@ -3,12 +3,11 @@ import json
 import os
 import time
 import csv
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from datetime import datetime, timezone
 
 # Charger .env depuis le dossier parent si nécessaire
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
-load_dotenv(dotenv_path)
+load_dotenv(find_dotenv())
 
 API_KEY = os.getenv("PULSEDIVE_API_KEY")
 
