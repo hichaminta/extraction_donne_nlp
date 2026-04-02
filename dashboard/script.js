@@ -10,6 +10,7 @@ let G_filtered    = [];   // after search + type + tag filters
 let G_page        = 0;    // current page index (0-based)
 let G_activeType   = null; // e.g. "ip"
 let G_activeSource = null; // e.g. "alienvault"
+let G_activeCountry = null; // e.g. "United States"
 let G_query        = '';   // text search
 
 let G_currentPageIocs = []; // IOCs on screen (for modal)
@@ -72,14 +73,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('total-cves').innerText = cves.length.toLocaleString();
 
         // Compute unique IOC sources
-        const iocSourceSet = new Set();
-        iocs.forEach(i => { if(Array.isArray(i.sources)) i.sources.forEach(s => s && iocSourceSet.add(s)); });
-        document.getElementById('total-ioc-sources').innerText = iocSourceSet.size.toLocaleString();
+        const iocSourceCount = {};
+        iocs.forEach(i => { if(Array.isArray(i.sources)) i.sources.forEach(s => { if(s) iocSourceCount[s] = (iocSourceCount[s]||0)+1; }); });
+        document.getElementById('total-ioc-sources').innerText = Object.keys(iocSourceCount).length.toLocaleString();
 
         // Compute unique CVE sources
-        const cveSourceSet = new Set();
-        cves.forEach(c => { if(Array.isArray(c.sources)) c.sources.forEach(s => s && cveSourceSet.add(s)); });
-        document.getElementById('total-cve-sources').innerText = cveSourceSet.size.toLocaleString();
+        const cveSourceCount = {};
+        cves.forEach(c => { if(Array.isArray(c.sources)) c.sources.forEach(s => { if(s) cveSourceCount[s] = (cveSourceCount[s]||0)+1; }); });
+        document.getElementById('total-cve-sources').innerText = Object.keys(cveSourceCount).length.toLocaleString();
+
+        // Compute countries
+        const countryCount = {};
+        const countryToCode = {};
+        iocs.forEach(i => {
+            if (Array.isArray(i.contexts)) {
+                for (let c of i.contexts) {
+                    if (c && (c.countryName || c.countryCode)) {
+                        let cname = c.countryName || c.countryCode;
+                        countryCount[cname] = (countryCount[cname]||0)+1;
+                        if (c.countryCode && !countryToCode[cname]) {
+                            countryToCode[cname] = c.countryCode;
+                        }
+                        break;
+                    }
+                }
+            }
+        });
 
         // Charts
         const typeCount = {};
@@ -91,14 +110,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         cves.forEach(c => { const y = (c.cve_id||'').split('-')[1]||'?'; yearCount[y]=(yearCount[y]||0)+1; });
         renderCVETrend(yearCount);
 
-        // Source charts
-        renderSourcesChart('iocSourcesChart', iocSourceSet);
-        renderSourcesChart('cveSourcesChart', cveSourceSet);
+        // Bar charts
+        renderBarChart('countryChart', countryCount, 'rgba(47,128,237,0.8)');
+        renderBarChart('iocSourcesChart', iocSourceCount, 'rgba(167,139,250,0.8)');
+        renderBarChart('cveSourcesChart', cveSourceCount, 'rgba(52,211,153,0.8)');
 
         // IOC section
         G_allIocs = iocs;
         buildTypeFilters(typeCount);
         buildSourceFilters(iocs);
+        buildCountryFilters(countryCount, countryToCode);
         applyFilters();   // initial render
 
         // CVE section
@@ -161,8 +182,30 @@ function renderTypeBreakdown(typeCount, total) {
     }).join('');
 }
 
-function renderSourcesChart(canvasId, sourceSet) {
-    // skip — charts already wired via HTML, kept for future bar chart use
+function renderBarChart(canvasId, dataCount, bgColor) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const sorted = Object.entries(dataCount).sort((a,b) => b[1]-a[1]).slice(0, 7);
+    const labels = sorted.map(x => x[0].length > 15 ? x[0].substring(0, 15) + '...' : x[0]);
+    const data = sorted.map(x => x[1]);
+
+    new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{ data: data, backgroundColor: bgColor, borderRadius: 4 }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.1)' }, ticks: { color: '#94a3b8' } },
+                y: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+            }
+        }
+    });
 }
 
 function renderCVETrend(yearCount) {
@@ -291,6 +334,33 @@ function buildSourceFilters(iocs) {
         .forEach(([s, cnt], i) => bar.appendChild(mkBtn(s, s, srcColor(i), cnt)));
 }
 
+function buildCountryFilters(countryCount, countryToCode) {
+    const bar = document.getElementById('countryFilterBar');
+    if (!bar) return;
+    bar.innerHTML = '';
+    if (Object.keys(countryCount).length === 0) {
+        bar.innerHTML = '<span class="no-tags-msg">Aucun pays dans les données</span>';
+        return;
+    }
+    const mkBtn = (label, country, badge, code) => {
+        const b = document.createElement('button');
+        b.className   = 'flt-btn' + (country === null ? ' flt-active' : '');
+        b.style.cssText = `--fb:rgba(47,128,237,0.18);--fc:#60a5fa;display:inline-flex;align-items:center;gap:4px;`;
+        let flagHtml = (code && code.length === 2) ? `<img src="https://flagcdn.com/w20/${code.toLowerCase()}.png" width="14" alt="${esc(code)}" style="border-radius:1px;">` : '';
+        b.innerHTML = `${flagHtml}<span>${esc(label)}</span>${badge ? `<span class="flt-badge">${badge.toLocaleString()}</span>` : ''}`;
+        b.onclick = () => {
+            document.querySelectorAll('#countryFilterBar .flt-btn').forEach(x => x.classList.remove('flt-active'));
+            b.classList.add('flt-active');
+            G_activeCountry = country;
+            G_page = 0;
+            applyFilters();
+        };
+        return b;
+    };
+    bar.appendChild(mkBtn('Tous les pays', null));
+    Object.entries(countryCount).sort((a,b) => b[1]-a[1]).slice(0, 20).forEach(([c, cnt]) => bar.appendChild(mkBtn(c, c, cnt, countryToCode[c])));
+}
+
 function buildCveSourceFilters(cves) {
     const bar = document.getElementById('cveSourceFilterBar');
     if (!bar) return;
@@ -361,6 +431,20 @@ function applyFilters() {
         if (G_activeSource !== null) {
             if (!Array.isArray(ioc.sources) || !ioc.sources.includes(G_activeSource)) return false;
         }
+        // country filter
+        if (G_activeCountry !== null) {
+            let matchesCountry = false;
+            if (Array.isArray(ioc.contexts)) {
+                for (let c of ioc.contexts) {
+                    if (c && (c.countryName || c.countryCode)) {
+                        let cname = c.countryName || c.countryCode;
+                        if (cname === G_activeCountry) matchesCountry = true;
+                        break;
+                    }
+                }
+            }
+            if (!matchesCountry) return false;
+        }
         return true;
     });
 
@@ -389,10 +473,28 @@ function renderPage() {
               }).join('')
             : '<span style="color:#475569">—</span>';
 
+        let locationHtml = '<span style="color:#475569">—</span>';
+        if (Array.isArray(ioc.contexts)) {
+            for (let c of ioc.contexts) {
+                if (c && (c.countryName || c.countryCode)) {
+                    let cname = c.countryName || c.countryCode;
+                    let ccode = c.countryCode;
+                    let isp = c.isp || '';
+                    let flag = (ccode && ccode.length === 2) 
+                        ? `<img src="https://flagcdn.com/w20/${ccode.toLowerCase()}.png" width="16" alt="${esc(ccode)}">` 
+                        : '';
+                    let infoHtml = isp ? `${esc(cname)} <span class="location-isp">/ ${esc(isp)}</span>` : esc(cname);
+                    locationHtml = `<div class="location-pill">${flag}${infoHtml}</div>`;
+                    break;
+                }
+            }
+        }
+
         return `<tr onclick="openIOCModal(${i})">
             <td class="idx-td">${start + i + 1}</td>
             <td style="color:#60a5fa;font-weight:600;font-family:monospace;font-size:0.82rem;">${esc(ioc.value)}</td>
             <td><span class="type-pill" style="background:${tc.bg};color:${tc.col}">${ioc.ioc_type||'unknown'}</span></td>
+            <td>${locationHtml}</td>
             <td style="color:#94a3b8;font-size:0.78rem;font-family:monospace">${esc(pts)}</td>
             <td style="color:#94a3b8;font-size:0.74rem">${esc(src)}</td>
             <td>${tgs}</td>
@@ -469,6 +571,29 @@ function openIOCModal(i) {
         ).join('')}</div>`;
     };
 
+    let cname = 'N/A', isp = 'N/A', usage = 'N/A', abuseScore = 'N/A', ccode = null;
+    if (Array.isArray(ioc.contexts)) {
+        for (let c of ioc.contexts) {
+            if (c) {
+                if (c.countryName || c.countryCode) {
+                    cname = c.countryName || c.countryCode;
+                    ccode = c.countryCode;
+                }
+                if (c.isp) isp = c.isp;
+                if (c.usageType) usage = c.usageType;
+                if (c.abuseConfidenceScore != null) abuseScore = c.abuseConfidenceScore + '%';
+            }
+        }
+    }
+
+    let countryHtml = esc(cname);
+    if (ccode && ccode.length === 2 && cname !== 'N/A') {
+        let flag = `<img src="https://flagcdn.com/w20/${ccode.toLowerCase()}.png" width="18" alt="${esc(ccode)}" style="margin-right:6px;vertical-align:middle;border-radius:2.5px;box-shadow:0 0 2px rgba(0,0,0,0.5);">`;
+        countryHtml = `<div style="display:inline-flex;align-items:center;background:rgba(255,255,255,0.06);padding:0.3rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.08);">${flag} <span>${esc(cname)}</span></div>`;
+    } else if (cname !== 'N/A') {
+        countryHtml = `<div style="display:inline-flex;align-items:center;background:rgba(255,255,255,0.06);padding:0.3rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.08);"><span>${esc(cname)}</span></div>`;
+    }
+
     body.innerHTML = `
       <div class="dr">
         <div class="dl">Valeur</div>
@@ -477,8 +602,19 @@ function openIOCModal(i) {
       <div class="dg4">
         <div class="dr"><div class="dl">Type</div>
           <span class="type-pill" style="background:${tc.bg};color:${tc.col}">${ioc.ioc_type||'unknown'}</span></div>
+        <div class="dr"><div class="dl">Score Abus</div>
+          <div>${abuseScore}</div></div>
+        <div class="dr"><div class="dl">Pays</div>
+          <div>${countryHtml}</div></div>
+        <div class="dr"><div class="dl">ISP / FAI</div>
+          <div>${esc(isp)}</div></div>
+      </div>
+      <!-- Add a second grid to avoid breaking the 4-column layout if it gets too wide -->
+      <div class="dg4" style="margin-top:-0.5rem">
         <div class="dr"><div class="dl">Confiance</div>
           <div>${ioc.confidence!=null ? ioc.confidence+'%' : 'N/A'}</div></div>
+        <div class="dr"><div class="dl">Usage</div>
+          <div>${esc(usage)}</div></div>
         <div class="dr"><div class="dl">Première vue</div>
           <div style="font-size:0.85rem">${ioc.first_seen ? fmtDate(ioc.first_seen) : 'N/A'}</div></div>
         <div class="dr"><div class="dl">Dernière vue</div>

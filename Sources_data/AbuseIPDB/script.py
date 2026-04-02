@@ -12,7 +12,8 @@ API_KEY = os.getenv("ABUSEIPDB_API_KEY")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_JSON = os.path.join(SCRIPT_DIR, "abuseipdb_data.json")
 TRACKING_FILE = os.path.join(SCRIPT_DIR, "last_run.csv")
-URL = "https://api.abuseipdb.com/api/v2/blacklist"
+URL_BLACKLIST = "https://api.abuseipdb.com/api/v2/blacklist"
+URL_CHECK = "https://api.abuseipdb.com/api/v2/check"
 
 def load_existing_data():
     """Charge les données existantes depuis le fichier JSON."""
@@ -23,6 +24,25 @@ def load_existing_data():
         except:
             pass
     return []
+
+def get_ip_details(ip_addr, api_key):
+    """Récupère les informations détaillées d'une IP via l'endpoint /check"""
+    headers = {
+        "Key": api_key,
+        "Accept": "application/json"
+    }
+    params = {
+        "ipAddress": ip_addr,
+        "maxAgeInDays": "90",
+        "verbose": True
+    }
+    try:
+        response = requests.get(URL_CHECK, headers=headers, params=params)
+        if response.status_code == 200:
+            return response.json().get("data", {})
+    except Exception as e:
+        print(f"Erreur lors de la requête /check pour {ip_addr}: {e}")
+    return None
 
 def get_last_run_date():
     """Récupère la date de la dernière extraction depuis le fichier CSV."""
@@ -60,7 +80,7 @@ def main():
 
     print("Récupération de la blacklist AbuseIPDB (seuil par défaut)...")
     try:
-        response = requests.get(URL, headers=headers, params=params)
+        response = requests.get(URL_BLACKLIST, headers=headers, params=params)
         response.raise_for_status()
         data = response.json()
     except Exception as e:
@@ -85,6 +105,8 @@ def main():
     new_entries_count = 0
     updated_entries_count = 0
     announced_count = 0
+    api_calls = 0
+    MAX_API_CALLS_CHECK = 100  # Limite pour ne pas épuiser le quota de l'API (tier gratuit = 1000/jour)
     
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     
@@ -109,13 +131,26 @@ def main():
                 existing_item["updated_at"] = now_str
                 updated_entries_count += 1
         else:
-            new_item = {
-                "ipAddress": ip_addr,
-                "abuseConfidenceScore": score,
-                "lastReportedAt": last_reported_str,
-                "extracted_at": now_str
-            }
-            existing_ips[ip_addr] = new_item
+            # Pour les nouvelles IPs, on récupère les infos détaillées
+            details = None
+            if api_calls < MAX_API_CALLS_CHECK:
+                print(f"Obtention des détails pour {ip_addr}...")
+                details = get_ip_details(ip_addr, API_KEY)
+                api_calls += 1
+            
+            if details:
+                details["extracted_at"] = now_str
+                existing_ips[ip_addr] = details
+            else:
+                # Fallback si l'appel a échoué ou si la limite est atteinte
+                new_item = {
+                    "ipAddress": ip_addr,
+                    "abuseConfidenceScore": score,
+                    "lastReportedAt": last_reported_str,
+                    "extracted_at": now_str
+                }
+                existing_ips[ip_addr] = new_item
+                
             new_entries_count += 1
             
             # N'annonce que les IPs avec un score >= 90
@@ -130,6 +165,8 @@ def main():
         print(f"Extraction terminée. {new_entries_count} nouvelles IPs, {updated_entries_count} mises à jour.")
         if announced_count > 0:
             print(f"{announced_count} IPs à haute confiance annoncées.")
+        if api_calls >= MAX_API_CALLS_CHECK:
+            print("ATTENTION: Limite d'appels API détaillés atteinte pour cette exécution.")
     else:
         print("Aucune nouvelle IP ou mise à jour trouvée.")
 

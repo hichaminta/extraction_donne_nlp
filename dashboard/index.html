@@ -89,8 +89,12 @@
                     </div>
                 </div>
 
-                <!-- Sources bar chart row -->
-                <div class="charts-grid" style="grid-template-columns:1fr 1fr;margin-top:0;">
+                <!-- Lower charts row -->
+                <div class="charts-grid" style="grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));margin-top:0;">
+                    <div class="chart-container">
+                        <h3>Top Pays (IOCs)</h3>
+                        <canvas id="countryChart"></canvas>
+                    </div>
                     <div class="chart-container">
                         <h3>Top IOC Sources</h3>
                         <canvas id="iocSourcesChart"></canvas>
@@ -123,6 +127,12 @@
                     <div id="sourceFilterBar" class="filter-bar"></div>
                 </div>
 
+                <!-- Country filter bar -->
+                <div class="filter-section">
+                    <span class="filter-label">Pays</span>
+                    <div id="countryFilterBar" class="filter-bar"></div>
+                </div>
+
                 <!-- Table -->
                 <div class="table-container">
                     <div class="table-header">
@@ -134,6 +144,7 @@
                                 <th>#</th>
                                 <th>Value</th>
                                 <th>Type</th>
+                                <th>Pays / FAI</th>
                                 <th>Ports</th>
                                 <th>Sources</th>
                                 <th>Tags</th>

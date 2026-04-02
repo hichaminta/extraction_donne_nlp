@@ -156,16 +156,21 @@ class RegexExtractor:
             val = item.get(f)
             if val and isinstance(val, str): parts.append(val)
         
-        # On évite json.dumps(ctx) car c'est trop lent sur de gros volumes.
-        # Si le contexte contient des chaînes, on peut les ajouter sélectivement.
         ctx = item.get("context")
         if isinstance(ctx, str):
             parts.append(ctx)
         elif isinstance(ctx, dict):
-            # On ne prend que les valeurs de premier niveau si ce sont des strings
-            for v in ctx.values():
-                if isinstance(v, str) and len(v) < 10000: # Limite de taille pour rester rapide
+            for k, v in ctx.items():
+                if isinstance(v, str) and len(v) < 10000:
                     parts.append(v)
+                elif isinstance(v, list):
+                    for sub_item in v:
+                        if isinstance(sub_item, str) and len(sub_item) < 1000:
+                            parts.append(sub_item)
+                        elif isinstance(sub_item, dict) and "comment" in sub_item:
+                            cmt = sub_item.get("comment")
+                            if isinstance(cmt, str) and len(cmt) < 10000:
+                                parts.append(cmt)
         return "\n".join(parts)
 
     def _clean_recursive(self, data: Any, values_to_remove: set[str]) -> Any:
@@ -190,7 +195,8 @@ class RegexExtractor:
             "raw_text", "description", "raw", 
             "raw_iocs", "raw_cves", 
             "merged_iocs", "extracted_iocs", 
-            "merged_cves", "extracted_cves"
+            "merged_cves", "extracted_cves",
+            "reports"
         }
         return {k: v for k, v in ctx.items() if k not in blacklist}
 

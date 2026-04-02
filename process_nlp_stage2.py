@@ -1,313 +1,519 @@
 import json
-import re
-import os
 import logging
-from collections import defaultdict
-from datetime import datetime
+import re
+from typing import Dict, Any, List, Set
+from pathlib import Path
+import spacy
 
-# Configuration du logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# --- REGEX PATTERNS ---
 
-# IPv4 robuste
-IP_REGEX = r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+# -----------------------------
+# Helpers généraux
+# -----------------------------
+NOISE_PATTERNS = [
+    r"main navigation",
+    r"événements\s+bulletins de sécurité",
+    r"niveau de risque",
+    r"niveau d'impact",
+    r"numéro de référence",
+    r"date de publication",
+    r"indices? de compromission",
+    r"indicateurs? de compromission",
+    r"brochure",
+    r"titre",
+    r"accueil",
+    r"présentation",
+    r"documents",
+    r"formulaires",
+    r"contacts",
+]
 
-# URL (gère aussi hxxp et [.] via normalisation préalable)
-URL_REGEX = r'https?://[^\s/$.?#].[^\s]*'
-
-# Domaine (basé sur TLDs communs pour éviter trop de bruit)
-DOMAIN_REGEX = r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
-
-# Hashes
-MD5_REGEX = r'\b[a-fA-F0-9]{32}\b'
-SHA1_REGEX = r'\b[a-fA-F0-9]{40}\b'
-SHA256_REGEX = r'\b[a-fA-F0-9]{64}\b'
-
-# Heuristiques patterns
-ACTOR_REGEX = r'\b(APT\d+|Lazarus|RedFoxtrot|LockBit|Midnight Blizzard|Nocturnal Ice|Kimsuky|Mustang Panda)\b'
-
-# Mots-clés pour les heuristiques
-ATTACK_TYPES = {
-    "ransomware": ["ransomware", "rançongiciel"],
-    "infostealer": ["infostealer", "logiciel espion", "stealer"],
-    "rat": ["rat", "remote access trojan", "cheval de troie"],
-    "phishing": ["phishing", "hameçonnage", "spear-phishing"]
+MALWARE_TERMS = {
+    "ransomware": "ransomware",
+    "rançongiciel": "ransomware",
+    "trojan": "trojan",
+    "cheval de troie": "trojan",
+    "rat": "rat",
+    "backdoor": "backdoor",
+    "botnet": "botnet",
+    "infostealer": "infostealer",
+    "stealer": "infostealer",
+    "spyware": "spyware",
+    "logiciel espion": "spyware",
+    "worm": "worm",
+    "ver": "worm",
+    "rootkit": "rootkit",
+    "loader": "loader",
+    "downloader": "downloader",
+    "dropper": "dropper",
+    "keylogger": "keylogger",
+    "virus": "virus",
 }
 
-MALWARE_LIST = [
-    "3AM", "Aurora Stealer", "DCRat", "Andromeda", "LockBit", "Acreed", 
-    "Lumma", "Rhadamanthys", "Cobalt Strike", "Zbot", "Zeus", "Gamarue", 
-    "Wauchos", "AnyDesk", "Bashe", "APT73", "AMOS", "Atomic Stealer", 
-    "AVrecon", "ChillyHell", "BeaverTail", "InvisibleFerret", "BlackByte", 
-    "Mirai", "Corona"
+ATTACK_TYPE_PATTERNS = {
+    "phishing": [r"\bphishing\b", r"hameçonnage", r"spear[\s-]?phishing"],
+    "ransomware": [r"\bransomware\b", r"rançongiciel"],
+    "infostealer": [r"\binfostealer\b", r"voleur de données", r"stealer"],
+    "malvertising": [r"\bmalvertising\b", r"publicité malveillante"],
+    "supply_chain": [r"supply chain", r"chaîne d'approvisionnement"],
+    "credential_theft": [r"vol d'identifiants", r"vol de mots de passe"],
+    "bruteforce": [r"brute force", r"force brute"],
+    "rce": [r"\brce\b", r"exécution de code à distance", r"remote code execution"],
+    "lateral_movement": [r"mouvement latéral", r"mouvements latéraux"],
+    "persistence": [r"persistance"],
+    "social_engineering": [r"ingénierie sociale"],
+    "ddos": [r"\bddos\b", r"déni de service distribué"],
+}
+
+PLATFORM_PATTERNS = {
+    "Windows": [r"\bwindows\b"],
+    "Linux": [r"\blinux\b"],
+    "macOS": [r"\bmacos\b", r"\bmac os\b"],
+    "Android": [r"\bandroid\b"],
+    "iOS": [r"\bios\b"],
+    "ESXi": [r"\besxi\b"],
+    "VMware": [r"\bvmware\b"],
+    "IoT": [r"\biot\b", r"internet of things"],
+    "M365": [r"microsoft 365", r"\bm365\b", r"\boffice 365\b"],
+}
+
+IMPACT_PATTERNS = {
+    "exécution de code": [r"exécution de code", r"code arbitraire", r"remote code execution", r"\brce\b"],
+    "déni de service": [r"déni de service", r"\bddos\b"],
+    "élévation de privilèges": [r"élévation de privilèges", r"privilèges élevés"],
+    "exfiltration": [r"exfiltration", r"données volées", r"vol de données"],
+    "chiffrement": [r"chiffrement", r"fichiers chiffrés", r"rançon"],
+    "persistance": [r"persistance"],
+    "accès non autorisé": [r"accès non autorisé", r"prise de contrôle", r"contrôle complet"],
+}
+
+RECOMMENDATION_PATTERNS = [
+    r"il est recommandé de[^.:\n]*",
+    r"il est fortement recommandé de[^.:\n]*",
+    r"le macert recommande de[^.:\n]*",
+    r"la dgssi recommande de[^.:\n]*",
+    r"mettre à jour[^.:\n]*",
+    r"appliquer les correctifs[^.:\n]*",
+    r"surveiller les journaux[^.:\n]*",
+    r"activer l'authentification multi[\s-]?facteurs[^.:\n]*",
+    r"restreindre l'accès[^.:\n]*",
+    r"intégrer les indicateurs de compromission[^.:\n]*",
 ]
 
-VENDORS = [
-    "Microsoft", "VMware", "Apple", "Cisco", "Fortinet", "Google", 
-    "Apache", "NetApp", "QNAP", "Zimbra", "AMD", "D-Link", "Hikvision", 
-    "Netgear", "TP-Link", "Zyxel", "AnyDesk"
-]
 
-PLATFORMS = [
-    "Windows", "Linux", "macOS", "ESXi", "Android", "iOS", "Unix", "Solaris"
-]
-
-# --- FUNCTIONS ---
-
-def load_input_file(path):
-    """Charge le fichier JSON de l'étape 1."""
-    if not os.path.exists(path):
-        logger.error(f"Fichier non trouvé : {path}")
-        return []
+# -----------------------------
+# Chargement
+# -----------------------------
+def load_input_file(path: str) -> List[Dict[str, Any]]:
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            logging.info("Chargement réussi de %s bulletins depuis %s.", len(data), path)
+            return data
     except Exception as e:
-        logger.error(f"Erreur lors du chargement : {e}")
+        logging.error("Erreur lors du chargement de %s: %s", path, e)
         return []
 
-def normalize_ioc(value):
-    """Nettoie et normalise un IOC (defanging)."""
+
+def load_nlp_model() -> spacy.language.Language:
+    try:
+        nlp = spacy.load("fr_core_news_md")
+        logging.info("Modèle NLP 'fr_core_news_md' chargé avec succès.")
+        return nlp
+    except OSError:
+        logging.error("Modèle introuvable. Installe-le avec : python -m spacy download fr_core_news_md")
+        raise
+
+
+# -----------------------------
+# Nettoyage
+# -----------------------------
+def normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_noise_entity(value: str) -> bool:
     if not value:
-        return value
-    # Normalisation du protocole
-    value = value.replace('hxxp://', 'http://').replace('hxxps://', 'https://')
-    value = value.replace('HXXP://', 'http://').replace('HXXPS://', 'https://')
-    # Normalisation des points
-    value = value.replace('[.]', '.').replace('(.)', '.').replace('{.}', '.')
-    # Suppression de ponctuations parasites à la fin (souvent capturées par regex)
-    value = value.rstrip('.,;)]')
-    return value.lower() if not value.startswith('http') else value
+        return True
 
-def extract_ips(text):
-    return re.findall(IP_REGEX, text)
+    v = normalize_whitespace(value)
+    v_lower = v.lower()
 
-def extract_domains(text):
-    # Filtrer pour éviter les extensions de fichiers communes comme .pdf, .exe
-    domains = re.findall(DOMAIN_REGEX, text)
-    filtered = []
-    excluded_exts = {'.pdf', '.exe', '.zip', '.txt', '.doc', '.xlsx', '.png', '.jpg'}
-    for d in domains:
-        if not any(d.lower().endswith(ext) for ext in excluded_exts):
-            filtered.append(d)
-    return filtered
+    if len(v) < 3:
+        return True
 
-def extract_urls(text):
-    return re.findall(URL_REGEX, text)
+    # Bruit de navigation / PDF / page DGSSI
+    for pattern in NOISE_PATTERNS:
+        if re.search(pattern, v_lower):
+            return True
 
-def extract_hashes(text):
-    hashes = {
-        "md5": re.findall(MD5_REGEX, text),
-        "sha1": re.findall(SHA1_REGEX, text),
-        "sha256": re.findall(SHA256_REGEX, text)
+    # Trop de symboles ou numérique pur
+    if re.fullmatch(r"[\W_]+", v):
+        return True
+    if re.fullmatch(r"\d+", v):
+        return True
+
+    # URLs, emails, chemins et hash dans les entités sémantiques
+    if re.search(r"https?://|www\.|@", v_lower):
+        return True
+    if re.fullmatch(r"[a-fA-F0-9]{32,128}", v):
+        return True
+    if "\\" in v or "/" in v and len(v.split()) <= 2:
+        return True
+
+    # Champs typiques parasites
+    blacklist = {
+        "titre",
+        "brochure",
+        "solution",
+        "recommandations",
+        "bulletin",
+        "dgssi",
+        "macert",
+        "niveau de risque",
+        "niveau d'impact",
+        "date de publication",
+        "numéro de référence",
+        "iocs",
+        "hashs",
+        "indices de compromission",
+        "indicateurs de compromission",
     }
-    return hashes
+    if v_lower in blacklist:
+        return True
 
-def extract_entities_with_model(text):
-    """
-    Placeholder pour future intégration NLP (spaCy / CamemBERT / LLM).
-    Pour l'instant, ne fait rien.
-    """
-    return {}
+    return False
 
-def extract_context_entities(bulletin):
-    """Extrait les entités contextuelles par heuristiques simples."""
-    text = (bulletin.get("bulletin_title", "") + " " + 
-            bulletin.get("description", "") + " " + 
-            bulletin.get("raw_text_clean", "")).lower()
-    
-    context = {
-        "malware": [],
-        "threat_actor": [],
-        "attack_type": [],
+
+def clean_text_for_nlp(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = text
+
+    # supprimer URLs / emails
+    cleaned = re.sub(r"https?://\S+", " ", cleaned)
+    cleaned = re.sub(r"\b[\w\.-]+@[\w\.-]+\.\w+\b", " ", cleaned)
+
+    # supprimer artefacts de multiples espaces / sauts
+    cleaned = re.sub(r"[_•·]+", " ", cleaned)
+    cleaned = normalize_whitespace(cleaned)
+
+    return cleaned
+
+
+# -----------------------------
+# Détection CTI rule-based
+# -----------------------------
+def detect_from_patterns(text: str, patterns: Dict[str, List[str]]) -> List[str]:
+    found = []
+    text_lower = text.lower()
+
+    for label, regs in patterns.items():
+        for rgx in regs:
+            if re.search(rgx, text_lower, flags=re.IGNORECASE):
+                found.append(label)
+                break
+
+    return found
+
+
+def extract_recommendations(text: str) -> List[str]:
+    recs = []
+    for pattern in RECOMMENDATION_PATTERNS:
+        matches = re.findall(pattern, text, flags=re.IGNORECASE)
+        for m in matches:
+            rec = normalize_whitespace(m)
+            if len(rec) > 10 and not is_noise_entity(rec):
+                recs.append(rec)
+    return sorted(set(recs))
+
+
+def detect_malware_terms(text: str) -> List[str]:
+    text_lower = text.lower()
+    found = set()
+
+    for term, normalized in MALWARE_TERMS.items():
+        if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text_lower):
+            found.add(normalized)
+
+    return sorted(found)
+
+
+def extract_possible_cti_names(text: str) -> Dict[str, List[str]]:
+    """
+    Extraction légère rule-based pour capter des noms explicites dans le texte :
+    ex. 'APT29', 'Lumma Stealer', 'Aurora Stealer', 'Dark Crystal RAT'
+    """
+    results = {
+        "malware_names": set(),
+        "threat_actor_names": set(),
+    }
+
+    patterns_malware = [
+        r"\b[A-Z][A-Za-z0-9\-_]{2,}\s+(?:Stealer|RAT|Botnet|Malware|Backdoor|Trojan|Loader|Spyware)\b",
+        r"\b(?:Lumma|Aurora|Tinba|PlugX|Ramnit|Remcos|Andromeda|Mirai|BlackByte|LockBit|DcRat|DCRat|Nymaim|Pykspa|Keenadu|M0yv|Acreed|AVrecon|BeaverTail|ChillyHell|Cheana|Bashe|Atomic Stealer)\b",
+    ]
+    patterns_actor = [
+        r"\bAPT[\s-]?\d+\b",
+        r"\bUNC\d+\b",
+        r"\bShinyHunters\b",
+        r"\bRedFoxtrot\b",
+        r"\bBashe\b",
+        r"\bAPT29\b",
+        r"\bShroudedSnooper\b",
+    ]
+
+    for pat in patterns_malware:
+        for match in re.findall(pat, text):
+            value = normalize_whitespace(match)
+            if not is_noise_entity(value):
+                results["malware_names"].add(value)
+
+    for pat in patterns_actor:
+        for match in re.findall(pat, text, flags=re.IGNORECASE):
+            value = normalize_whitespace(match)
+            if not is_noise_entity(value):
+                results["threat_actor_names"].add(value)
+
+    return {
+        "malware_names": sorted(results["malware_names"]),
+        "threat_actor_names": sorted(results["threat_actor_names"]),
+    }
+
+
+# -----------------------------
+# NER + enrichissement CTI
+# -----------------------------
+def classify_entity(ent_text: str, ent_label: str, full_text_lower: str) -> Dict[str, List[str]]:
+    """
+    Classement contextuel plus prudent que:
+    ORG -> vendor
+    MISC -> product
+    """
+    out = {
         "vendor": [],
         "product": [],
-        "platform": []
+        "threat_actor": [],
+        "malware": [],
+        "tools": [],
     }
 
-    # Attack Type
-    for atype, keywords in ATTACK_TYPES.items():
-        if any(kw in text for kw in keywords):
-            context["attack_type"].append(atype)
+    value = normalize_whitespace(ent_text)
+    if is_noise_entity(value):
+        return out
 
-    # Malware
-    for m in MALWARE_LIST:
-        if re.search(r'\b' + re.escape(m.lower()) + r'\b', text):
-            context["malware"].append(m)
+    value_lower = value.lower()
 
-    # Threat Actor
-    found_actors = re.findall(ACTOR_REGEX, text, re.IGNORECASE)
-    context["threat_actor"] = list(set(found_actors))
+    # Threat actors explicites
+    if re.search(r"\bapt[\s-]?\d+\b", value_lower) or value in {"ShinyHunters", "RedFoxtrot", "Bashe", "ShroudedSnooper"}:
+        out["threat_actor"].append(value)
+        return out
 
-    # Vendor
-    for v in VENDORS:
-        if re.search(r'\b' + re.escape(v.lower()) + r'\b', text):
-            context["vendor"].append(v)
+    # Noms liés à malware
+    if any(word in value_lower for word in ["stealer", "ransomware", "trojan", "rat", "backdoor", "botnet", "worm", "spyware", "loader"]):
+        out["malware"].append(value)
+        return out
 
-    # Product
-    # Priorité aux affected_systems déjà extraits au Stage 1
-    affected = bulletin.get("affected_systems", [])
-    if isinstance(affected, list) and len(affected) > 0:
-        context["product"] = affected
-    else:
-        # Tentative d'extraction simple si vide
-        common_products = ["Windows Server", "Office 365", "vCenter", "Exchange Server", "FortiOS"]
-        for p in common_products:
-            if p.lower() in text:
-                context["product"].append(p)
+    # Vendors connus / organisations
+    known_vendors = {
+        "microsoft", "apple", "google", "oracle", "vmware", "broadcom", "qnap", "fortinet",
+        "palo alto networks", "sonicwall", "jetbrains", "netapp", "adobe", "mongodb",
+        "fortra", "zimbra", "hpe", "hewlett packard enterprise", "samsung", "amazon",
+        "aws", "qnap", "misp", "anydesk", "amd", "cisco", "barracuda", "zoho", "manageengine"
+    }
+    if value_lower in known_vendors:
+        out["vendor"].append(value)
+        return out
 
-    # Platform
-    for p in PLATFORMS:
-        if p.lower() in text:
-            context["platform"].append(p)
+    # Produit / techno
+    product_keywords = [
+        "server", "vpn", "sharepoint", "exchange", "vcenter", "cloud", "office", "windows",
+        "linux", "macos", "android", "ios", "misp", "mongodb", "teamcity", "solarwinds",
+        "react native", "metro", "magento", "globalprotect", "pan-os", "fortios", "ssl vpn",
+        "netbak", "word", "ssh", "office 2016", "office 2019", "exchange server"
+    ]
+    if any(k in value_lower for k in product_keywords):
+        out["product"].append(value)
+        return out
 
-    # Déduplication
-    for k in context:
-        if isinstance(context[k], list):
-            context[k] = list(set(context[k]))
+    # Heuristique finale
+    if ent_label == "ORG":
+        out["vendor"].append(value)
+    elif ent_label in {"MISC", "PROD"}:
+        out["product"].append(value)
 
-    return context
+    return out
 
-def build_ioc_object(value, ioc_type, bulletin, context_data):
-    """Construit l'objet IOC final."""
-    return {
-        "type": "ioc",
-        "value": value,
-        "ioc_type": ioc_type,
-        "sources": ["dgssi"],
-        "tags": ["dgssi"],
-        "confidence": 80,
-        "contexts": [
-            {
-                "bulletin_id": bulletin.get("bulletin_id"),
-                "bulletin_title": bulletin.get("bulletin_title"),
-                "published_date": bulletin.get("published_date"),
-                "url": bulletin.get("url"),
-                "product": ", ".join(context_data.get("product", [])),
-                "vendor": ", ".join(context_data.get("vendor", [])),
-                "malware": context_data.get("malware", []),
-                "threat_actor": context_data.get("threat_actor", []),
-                "attack_type": context_data.get("attack_type", []),
-                "cves": bulletin.get("cves", []),
-                "description": bulletin.get("description", "")
-            }
-        ]
+
+def extract_entities_with_nlp(text: str, nlp: spacy.language.Language) -> Dict[str, List[str]]:
+    entities = {
+        "malware": [],
+        "threat_actor": [],
+        "vendor": [],
+        "product": [],
+        "attack_type": [],
+        "platform": [],
+        "impact": [],
+        "tools": [],
+        "recommendations": []
     }
 
-def process_file(input_path, output_path):
-    """Fonction principale de traitement."""
-    logger.info(f"Démarrage du traitement Stage 2 : {input_path}")
-    data = load_input_file(input_path)
-    
-    if not data:
-        logger.warning("Aucune donnée à traiter.")
-        return
+    if not text:
+        return entities
 
-    # Dictionnaire pour dédoublonner les IOCs : (value, type) -> full_object
-    iocs_map = {}
-    
-    stats = {
-        "total_bulletins": len(data),
-        "total_iocs": 0,
-        "ips": 0,
-        "domains": 0,
-        "urls": 0,
-        "hashes": 0,
-        "bulletins_with_malware": 0,
-        "bulletins_with_product": 0
-    }
+    clean_text = clean_text_for_nlp(text)
+    doc = nlp(clean_text)
+    full_text_lower = clean_text.lower()
 
-    bulletins_processed = 0
+    # 1) Détection rule-based CTI forte
+    entities["malware"].extend(detect_malware_terms(clean_text))
+    entities["attack_type"].extend(detect_from_patterns(clean_text, ATTACK_TYPE_PATTERNS))
+    entities["platform"].extend(detect_from_patterns(clean_text, PLATFORM_PATTERNS))
+    entities["impact"].extend(detect_from_patterns(clean_text, IMPACT_PATTERNS))
+    entities["recommendations"].extend(extract_recommendations(clean_text))
 
-    for bulletin in data:
-        raw_text = bulletin.get("raw_text_clean", "")
-        if not raw_text:
+    named_cti = extract_possible_cti_names(clean_text)
+    entities["malware"].extend(named_cti["malware_names"])
+    entities["threat_actor"].extend(named_cti["threat_actor_names"])
+
+    # 2) NER spaCy avec classification contextuelle
+    for ent in doc.ents:
+        value = normalize_whitespace(ent.text)
+        if is_noise_entity(value):
             continue
 
-        bulletins_processed += 1
-        
-        # 1. Extraction contextuelle (Heuristiques)
-        context_data = extract_context_entities(bulletin)
-        
-        if context_data["malware"]: stats["bulletins_with_malware"] += 1
-        if context_data["product"]: stats["bulletins_with_product"] += 1
+        classified = classify_entity(value, ent.label_, full_text_lower)
+        for key, vals in classified.items():
+            entities[key].extend(vals)
 
-        # 2. Extraction IOCs (Regex)
-        # On nettoie d'abord un peu le texte pour les defangs communs avant l'extraction
-        # Mais attention de ne pas casser les regex URL en remplaçant trop tôt.
-        # Strategie : extraire puis normaliser individuellement.
-        
-        ips = extract_ips(raw_text)
-        domains = extract_domains(raw_text)
-        urls = extract_urls(raw_text)
-        hashes = extract_hashes(raw_text)
+    return entities
 
-        # Liste temporaire d'IOCs trouvés dans ce bulletin
-        found_in_bulletin = []
 
-        for ip in ips: found_in_bulletin.append((normalize_ioc(ip), "ip"))
-        for d in domains: found_in_bulletin.append((normalize_ioc(d), "domain"))
-        for u in urls: found_in_bulletin.append((normalize_ioc(u), "url"))
-        for h_type, h_list in hashes.items():
-            for h in h_list:
-                found_in_bulletin.append((h.lower(), h_type))
+def normalize_entities(entities: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    normalized = {}
 
-        # 3. Mise à jour de la map globale
-        for val, itype in found_in_bulletin:
-            if not val or len(val) < 3: continue
-            
-            # Eviter les domaines generic comme "dgssi.gov.ma" ou "google.com" si besoin
-            if itype == "domain" and val in ["dgssi.gov.ma", "microsoft.com", "google.com"]:
+    for key, values in entities.items():
+        cleaned: Set[str] = set()
+
+        for value in values:
+            v = normalize_whitespace(str(value))
+            if not v:
                 continue
 
-            key = (val, itype)
-            ioc_obj = build_ioc_object(val, itype, bulletin, context_data)
-            
-            if key not in iocs_map:
-                iocs_map[key] = ioc_obj
-            else:
-                # Si l'IOC existe déjà, on ajoute le nouveau contexte
-                # On évite d'ajouter le même bulletin_id deux fois pour le même IOC
-                existing_contexts = [ctx["bulletin_id"] for ctx in iocs_map[key]["contexts"]]
-                if bulletin.get("bulletin_id") not in existing_contexts:
-                    iocs_map[key]["contexts"].append(ioc_obj["contexts"][0])
+            if key != "recommendations" and is_noise_entity(v):
+                continue
 
-    # Conversion de la map en liste
-    final_output = list(iocs_map.values())
-    
-    # Update stats
-    stats["total_iocs"] = len(final_output)
-    for ioc in final_output:
-        t = ioc["ioc_type"]
-        if t == "ip": stats["ips"] += 1
-        elif t == "domain": stats["domains"] += 1
-        elif t == "url": stats["urls"] += 1
-        elif t in ["md5", "sha1", "sha256"]: stats["hashes"] += 1
+            # harmonisation simple
+            if key in {"malware", "attack_type", "platform", "impact"}:
+                v = v.strip()
 
-    # Sauvegarde JSON
+            cleaned.add(v)
+
+        normalized[key] = sorted(cleaned)
+
+    return normalized
+
+
+# -----------------------------
+# Construction sortie
+# -----------------------------
+def build_context_object(bulletin: Dict[str, Any], entities: Dict[str, List[str]]) -> Dict[str, Any]:
+    return {
+        "source": bulletin.get("source", "dgssi"),
+        "bulletin_id": bulletin.get("bulletin_id", ""),
+        "bulletin_title": bulletin.get("bulletin_title", ""),
+        "published_date": bulletin.get("published_date", ""),
+        "url": bulletin.get("url", ""),
+        "description": bulletin.get("description", ""),
+        "cves": bulletin.get("cves", []),
+        "nlp_entities": entities,
+        "model_info": {
+            "engine": "spaCy + rule-based CTI",
+            "model_name": "fr_core_news_md"
+        }
+    }
+
+
+# -----------------------------
+# Pipeline principal
+# -----------------------------
+def process_file(input_path: str, output_path: str, summary_path: str):
+    bulletins = load_input_file(input_path)
+    if not bulletins:
+        logging.warning("Aucune donnée à traiter.")
+        return
+
     try:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(final_output, f, indent=2, ensure_ascii=False)
-        
-        # Sauvegarde Summary
-        summary_path = os.path.join(os.path.dirname(output_path), "summary_stage2.json")
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
-            
-        logger.info(f"Traitement terminé. {len(final_output)} IOCs extraits.")
-        logger.info(f"Output : {output_path}")
-        logger.info(f"Summary : {summary_path}")
+        nlp = load_nlp_model()
+    except Exception:
+        logging.error("Échec du chargement du modèle NLP. Abandon du processus.")
+        return
+
+    output_data = []
+
+    metrics_summary = {
+        "total_bulletins": len(bulletins),
+        "bulletins_with_malware": 0,
+        "bulletins_with_product": 0,
+        "bulletins_with_actor": 0,
+        "bulletins_with_attack_type": 0,
+        "bulletins_with_platform": 0,
+        "bulletins_with_impact": 0,
+        "bulletins_with_recommendations": 0
+    }
+
+    for bulletin in bulletins:
+        text_parts = []
+        for field in ["bulletin_title", "description", "raw_text_clean"]:
+            val = bulletin.get(field)
+            if val and isinstance(val, str):
+                text_parts.append(val)
+
+        full_text = " ".join(text_parts)
+        entities = extract_entities_with_nlp(full_text, nlp)
+        normalized_entities = normalize_entities(entities)
+
+        if normalized_entities["malware"]:
+            metrics_summary["bulletins_with_malware"] += 1
+        if normalized_entities["product"]:
+            metrics_summary["bulletins_with_product"] += 1
+        if normalized_entities["threat_actor"]:
+            metrics_summary["bulletins_with_actor"] += 1
+        if normalized_entities["attack_type"]:
+            metrics_summary["bulletins_with_attack_type"] += 1
+        if normalized_entities["platform"]:
+            metrics_summary["bulletins_with_platform"] += 1
+        if normalized_entities["impact"]:
+            metrics_summary["bulletins_with_impact"] += 1
+        if normalized_entities["recommendations"]:
+            metrics_summary["bulletins_with_recommendations"] += 1
+
+        output_data.append(build_context_object(bulletin, normalized_entities))
+
+    try:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=4, ensure_ascii=False)
+        logging.info("Fichier NLP complet sauvegardé sous : %s", output_path)
     except Exception as e:
-        logger.error(f"Erreur lors de la sauvegarde : {e}")
+        logging.error("Erreur lors de la sauvegarde JSON de sortie : %s", e)
+
+    try:
+        Path(summary_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(metrics_summary, f, indent=4, ensure_ascii=False)
+        logging.info("Fichier Summary sauvegardé sous : %s", summary_path)
+    except Exception as e:
+        logging.error("Erreur lors de la sauvegarde du summary : %s", e)
+
 
 if __name__ == "__main__":
-    INPUT_FILE = "process_nlp/output/dgssi_stage1.json"
-    OUTPUT_FILE = "process_nlp/output/dgssi_iocs_stage2.json"
-    
-    process_file(INPUT_FILE, OUTPUT_FILE)
+    BASE_DIR = Path(__file__).resolve().parent
+
+    INPUT_FILE = BASE_DIR / "process_nlp" / "output" / "dgssi_stage1.json"
+    OUTPUT_FILE = BASE_DIR / "process_nlp" / "output" / "dgssi_nlp_stage2.json"
+    SUMMARY_FILE = BASE_DIR / "process_nlp" / "output" / "dgssi_nlp_stage2_summary.json"
+
+    process_file(str(INPUT_FILE), str(OUTPUT_FILE), str(SUMMARY_FILE))
