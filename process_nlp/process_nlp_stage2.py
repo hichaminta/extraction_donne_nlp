@@ -4,6 +4,7 @@ import re
 from typing import Dict, Any, List, Set
 from pathlib import Path
 import spacy
+from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -464,7 +465,8 @@ def process_file(input_path: str, output_path: str, summary_path: str):
         "bulletins_with_recommendations": 0
     }
 
-    for bulletin in bulletins:
+    pbar = tqdm(bulletins, desc="Analyse NLP en cours", unit="bulletin")
+    for bulletin in pbar:
         text_parts = []
         for field in ["bulletin_title", "description", "raw_text_clean"]:
             val = bulletin.get(field)
@@ -490,6 +492,12 @@ def process_file(input_path: str, output_path: str, summary_path: str):
         if normalized_entities["recommendations"]:
             metrics_summary["bulletins_with_recommendations"] += 1
 
+        pbar.set_postfix({
+            "mw": metrics_summary["bulletins_with_malware"],
+            "act": metrics_summary["bulletins_with_actor"],
+            "prod": metrics_summary["bulletins_with_product"]
+        })
+
         output_data.append(build_context_object(bulletin, normalized_entities))
 
     try:
@@ -512,7 +520,7 @@ def process_file(input_path: str, output_path: str, summary_path: str):
 if __name__ == "__main__":
     BASE_DIR = Path(__file__).resolve().parent
 
-    INPUT_FILE = BASE_DIR / "output" / "dgssi_stage1.json"
+    INPUT_FILE = BASE_DIR / "output" / "dgssi_stage1_random_1000.json"
     OUTPUT_FILE = BASE_DIR / "output" / "dgssi_nlp_stage2.json"
     SUMMARY_FILE = BASE_DIR / "output" / "dgssi_nlp_stage2_summary.json"
 
