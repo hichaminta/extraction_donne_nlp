@@ -22,26 +22,26 @@ let G_activeCveSource = null; // e.g. "nvd"
 
 // Colour palettes
 const TYPE_COLORS = {
-    ip:      { bg: 'rgba(47,128,237,0.18)',  col: '#60a5fa' },
-    url:     { bg: 'rgba(155,81,224,0.18)',  col: '#c084fc' },
-    domain:  { bg: 'rgba(39,174,96,0.18)',   col: '#34d399' },
-    sha256:  { bg: 'rgba(235,87,87,0.18)',   col: '#f87171' },
-    sha1:    { bg: 'rgba(242,196,76,0.18)',  col: '#fbbf24' },
-    md5:     { bg: 'rgba(242,153,74,0.18)',  col: '#fb923c' },
-    email:   { bg: 'rgba(86,204,242,0.18)',  col: '#38bdf8' },
-    unknown: { bg: 'rgba(100,116,139,0.18)', col: '#94a3b8' },
+    ip:      { bg: 'rgba(139, 92, 246, 0.18)', col: '#a78bfa' }, // Violet
+    url:     { bg: 'rgba(245, 158, 11, 0.18)',  col: '#fbbf24' }, // Amber
+    domain:  { bg: 'rgba(16, 185, 129, 0.18)', col: '#34d399' }, // Emerald
+    sha256:  { bg: 'rgba(249, 115, 22, 0.18)',  col: '#fb923c' }, // Orange
+    sha1:    { bg: 'rgba(239, 68, 68, 0.18)',  col: '#f87171' }, // Red
+    md5:     { bg: 'rgba(244, 63, 94, 0.18)',  col: '#fb7185' }, // Rose
+    email:   { bg: 'rgba(192, 132, 252, 0.18)', col: '#d8b4fe' }, // Light Purple
+    unknown: { bg: 'rgba(100, 116, 139, 0.18)', col: '#94a3b8' },
 };
 function typeColor(t) { return TYPE_COLORS[t] || TYPE_COLORS.unknown; }
 
 const TAG_PALETTE = [
-    { bg: 'rgba(155,81,224,0.18)',  col: '#c084fc' },
-    { bg: 'rgba(47,128,237,0.18)',  col: '#60a5fa' },
-    { bg: 'rgba(235,87,87,0.18)',   col: '#f87171' },
-    { bg: 'rgba(242,196,76,0.18)', col: '#fbbf24' },
-    { bg: 'rgba(39,174,96,0.18)',   col: '#34d399' },
-    { bg: 'rgba(86,204,242,0.18)',  col: '#38bdf8' },
-    { bg: 'rgba(242,153,74,0.18)', col: '#fb923c' },
-    { bg: 'rgba(236,72,153,0.18)', col: '#f472b6' },
+    { bg: 'rgba(139, 92, 246, 0.18)', col: '#a78bfa' },
+    { bg: 'rgba(245, 158, 11, 0.18)', col: '#fbbf24' },
+    { bg: 'rgba(16, 185, 129, 0.18)', col: '#34d399' },
+    { bg: 'rgba(249, 115, 22, 0.18)', col: '#fb923c' },
+    { bg: 'rgba(239, 68, 68, 0.18)',  col: '#f87171' },
+    { bg: 'rgba(244, 63, 94, 0.18)',  col: '#fb7185' },
+    { bg: 'rgba(168, 85, 247, 0.18)', col: '#c084fc' },
+    { bg: 'rgba(234, 179, 8, 0.18)',  col: '#facc15' },
 ];
 const tagColor = (i) => TAG_PALETTE[i % TAG_PALETTE.length];
 
@@ -52,19 +52,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     lucide.createIcons();
     const statusEl = document.getElementById('loading-status');
     const overlay  = document.getElementById('loading-overlay');
+    const barEl    = document.getElementById('loader-bar');
+
+    const setLoad = (msg, pct) => {
+        if (statusEl) statusEl.innerText = msg;
+        if (barEl) barEl.style.width = pct + '%';
+    };
 
     try {
-        statusEl.innerText = 'Fetching IOCs (320 MB)…';
+        setLoad('Authenticating to Central Threat Intelligence...', 10);
+        await new Promise(r => setTimeout(r, 400)); // aesthetic delay
+
+        setLoad('Streaming IOC repository (320 MB)...', 25);
         const iocRes = await fetch('/output_regex/iocs_extracted.json');
         if (!iocRes.ok) throw new Error('IOCs fetch failed');
         const iocs = await iocRes.json();
+        setLoad('IOC repository synchronized.', 45);
 
-        statusEl.innerText = 'Fetching CVEs (230 MB)…';
+        setLoad('Fetching CVE vulnerability signatures (230 MB)...', 55);
         const cveRes = await fetch('/output_regex/cves_extracted.json');
         if (!cveRes.ok) throw new Error('CVEs fetch failed');
         const cves = await cveRes.json();
+        setLoad('Vulnerability signatures synchronized.', 75);
 
-        statusEl.innerText = 'Building indexes…';
+        setLoad('Mapping global threat vectors...', 85);
         window._cveIndex = Object.fromEntries(
             cves.filter(c => c.cve_id).map(c => [c.cve_id.toUpperCase(), c])
         );
@@ -100,6 +111,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
+        setLoad('Rendering visualization layers...', 95);
+
         // Charts
         const typeCount = {};
         iocs.forEach(i => { const t = i.ioc_type || 'unknown'; typeCount[t] = (typeCount[t]||0)+1; });
@@ -111,16 +124,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderCVETrend(yearCount);
 
         // Bar charts
-        renderBarChart('countryChart', countryCount, 'rgba(47,128,237,0.8)');
-        renderBarChart('iocSourcesChart', iocSourceCount, 'rgba(167,139,250,0.8)');
-        renderBarChart('cveSourcesChart', cveSourceCount, 'rgba(52,211,153,0.8)');
+        renderBarChart('countryChart', countryCount, '#8b5cf6');   // Purple
+        renderBarChart('iocSourcesChart', iocSourceCount, '#f59e0b'); // Amber
+        renderBarChart('cveSourcesChart', cveSourceCount, '#10b981'); // Emerald
 
         // IOC section
         G_allIocs = iocs;
         buildTypeFilters(typeCount);
         buildSourceFilters(iocs);
         buildCountryFilters(countryCount, countryToCode);
-        applyFilters();   // initial render
+        applyFilters();
 
         // CVE section
         G_allCves = cves.reverse();
@@ -141,12 +154,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupNavigation();
         setupModals();
 
-        overlay.style.opacity = '0';
-        setTimeout(() => overlay.style.display = 'none', 500);
+        setLoad('System Ready. Decrypting environment...', 100);
+        
+        setTimeout(() => {
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.style.display = 'none', 800);
+        }, 600);
 
     } catch (err) {
         console.error(err);
-        statusEl.innerHTML = `<span style="color:#f87171">Error: ${err.message}<br>Run start_dashboard.py first.</span>`;
+        if (statusEl) {
+            statusEl.innerHTML = `<span style="color:#f87171">Fatal Execution Error: ${err.message}</span>`;
+        }
     }
 });
 
@@ -158,8 +177,8 @@ function renderIOCDistribution(typeCount) {
         type: 'pie',
         data: {
             labels: Object.keys(typeCount),
-            datasets: [{ data: Object.values(typeCount), borderWidth: 0,
-                backgroundColor: ['#9b51e0','#2f80ed','#eb5757','#f2c94c','#27ae60','#56ccf2','#f2994a'] }]
+            datasets: [{ data: Object.values(typeCount), borderWidth: 2, borderColor: '#0b0e14',
+                backgroundColor: ['#8b5cf6','#f59e0b','#10b981','#f97316','#ef4444','#ec4899','#a855f7'] }]
         },
         options: { responsive: true, maintainAspectRatio: false,
             plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } } }
@@ -215,7 +234,8 @@ function renderCVETrend(yearCount) {
         data: {
             labels: yrs,
             datasets: [{ label:'CVEs', data: yrs.map(y=>yearCount[y]),
-                borderColor:'#2f80ed', backgroundColor:'rgba(47,128,237,0.1)',
+                borderColor:'#10b981', backgroundColor:'rgba(16, 185, 129, 0.1)',
+                shadowBlur: 10, shadowColor: 'rgba(16, 185, 129, 0.5)',
                 fill:true, tension:0.4 }]
         },
         options: { responsive:true, maintainAspectRatio:false,
@@ -347,7 +367,8 @@ function buildCountryFilters(countryCount, countryToCode) {
         b.className   = 'flt-btn' + (country === null ? ' flt-active' : '');
         b.style.cssText = `--fb:rgba(47,128,237,0.18);--fc:#60a5fa;display:inline-flex;align-items:center;gap:4px;`;
         let flagHtml = (code && code.length === 2) ? `<img src="https://flagcdn.com/w20/${code.toLowerCase()}.png" width="14" alt="${esc(code)}" style="border-radius:1px;">` : '';
-        b.innerHTML = `${flagHtml}<span>${esc(label)}</span>${badge ? `<span class="flt-badge">${badge.toLocaleString()}</span>` : ''}`;
+        let displayLabel = (code && code.length >= 2 && code.length <= 3) ? code.toUpperCase() : label;
+        b.innerHTML = `${flagHtml}<span>${esc(displayLabel)}</span>${badge ? `<span class="flt-badge">${badge.toLocaleString()}</span>` : ''}`;
         b.onclick = () => {
             document.querySelectorAll('#countryFilterBar .flt-btn').forEach(x => x.classList.remove('flt-active'));
             b.classList.add('flt-active');
@@ -465,12 +486,11 @@ function renderPage() {
     tbody.innerHTML = slice.map((ioc, i) => {
         const tc  = typeColor(ioc.ioc_type);
         const src = Array.isArray(ioc.sources) ? ioc.sources.join(', ') : '—';
-        const pts = Array.isArray(ioc.ports) && ioc.ports.length ? ioc.ports.join(', ') : '—';
         const tgs = Array.isArray(ioc.tags)  && ioc.tags.length
-            ? ioc.tags.map((t, j) => {
+            ? `<div class="pill-container">${ioc.tags.map((t, j) => {
                 const c = tagColor(j);
                 return `<span class="tag-pill" style="background:${c.bg};color:${c.col}">${esc(t)}</span>`;
-              }).join('')
+              }).join('')}</div>`
             : '<span style="color:#475569">—</span>';
 
         let locationHtml = '<span style="color:#475569">—</span>';
@@ -483,8 +503,8 @@ function renderPage() {
                     let flag = (ccode && ccode.length === 2) 
                         ? `<img src="https://flagcdn.com/w20/${ccode.toLowerCase()}.png" width="16" alt="${esc(ccode)}">` 
                         : '';
-                    let infoHtml = isp ? `${esc(cname)} <span class="location-isp">/ ${esc(isp)}</span>` : esc(cname);
-                    locationHtml = `<div class="location-pill">${flag}${infoHtml}</div>`;
+                    let displayCode = ccode && (ccode.length === 2 || ccode.length === 3) ? ccode.toUpperCase() : cname;
+                    locationHtml = `<div class="location-pill">${flag}${esc(displayCode)}</div>`;
                     break;
                 }
             }
@@ -495,7 +515,6 @@ function renderPage() {
             <td style="color:#60a5fa;font-weight:600;font-family:monospace;font-size:0.82rem;">${esc(ioc.value)}</td>
             <td><span class="type-pill" style="background:${tc.bg};color:${tc.col}">${ioc.ioc_type||'unknown'}</span></td>
             <td>${locationHtml}</td>
-            <td style="color:#94a3b8;font-size:0.78rem;font-family:monospace">${esc(pts)}</td>
             <td style="color:#94a3b8;font-size:0.74rem">${esc(src)}</td>
             <td>${tgs}</td>
         </tr>`;

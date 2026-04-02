@@ -179,6 +179,10 @@ class DGSSIProcessorStage1:
 
     def process_file(self, input_path, output_path, summary_path):
         """Fonction principale de traitement."""
+        import os
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+        
         with open(input_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
