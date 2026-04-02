@@ -124,6 +124,19 @@ tbody tr:hover { background:rgba(47,128,237,.06); }
 .sev-m { background:rgba(242,196,76,.15); color:#fbbf24; }
 .sev-l { background:rgba(39,174,96,.15);  color:#34d399; }
 .sev-n { background:rgba(148,163,184,.1); color:#94a3b8; }
+.score-pill { display:inline-block; padding:.2rem .55rem; border-radius:4px; font-size:.75rem; font-weight:800; font-family:monospace; }
+.sc-c { background:rgba(235,87,87,.18); color:#f87171; box-shadow:0 0 10px rgba(235,87,87,.2); }
+.sc-h { background:rgba(242,153,74,.18); color:#fb923c; }
+.sc-m { background:rgba(242,196,76,.18); color:#fbbf24; }
+.sc-l { background:rgba(39,174,96,.18);  color:#34d399; }
+.sc-n { background:rgba(148,163,184,.15); color:#94a3b8; }
+
+.description-box {
+    background: rgba(15,23,42,.4); border-left: 3px solid var(--primary);
+    padding: 1.25rem 1.5rem; border-radius: 4px 12px 12px 4px;
+    font-size: .94rem; line-height: 1.6; color: #cbd5e1;
+    margin-bottom: 1.5rem; white-space: pre-wrap;
+}
 
 /* ── Paginator ── */
 .paginator { display:flex; align-items:center; justify-content:space-between; padding:.9rem .5rem; flex-wrap:wrap; gap:.5rem; }

@@ -17,6 +17,7 @@ let G_visibleCves     = []; // CVEs on screen (for modal)
 let G_allCves         = []; // full CVE dataset
 let G_filteredCves    = []; // after search
 let G_cvePage         = 0;    // current page index for CVEs
+let G_activeCveSource = null; // e.g. "nvd"
 
 // Colour palettes
 const TYPE_COLORS = {
@@ -102,6 +103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // CVE section
         G_allCves = cves.reverse();
+        buildCveSourceFilters(cves);
         applyCveFilters();
 
         document.getElementById('cveSearch').addEventListener('input', e => {
@@ -278,6 +280,57 @@ function buildSourceFilters(iocs) {
             G_activeSource = src;
             G_page = 0;
             applyFilters();
+        };
+        return b;
+    };
+
+    bar.appendChild(mkBtn('All Sources', null, { bg:'rgba(248,250,252,0.08)', col:'#f8fafc' }));
+    // Sort by count descending
+    Object.entries(srcCount)
+        .sort((a,b) => b[1]-a[1])
+        .forEach(([s, cnt], i) => bar.appendChild(mkBtn(s, s, srcColor(i), cnt)));
+}
+
+function buildCveSourceFilters(cves) {
+    const bar = document.getElementById('cveSourceFilterBar');
+    if (!bar) return;
+    bar.innerHTML = '';
+
+    // Count occurrences per source
+    const srcCount = {};
+    cves.forEach(cve => {
+        if (Array.isArray(cve.sources)) cve.sources.forEach(s => { if(s) srcCount[s] = (srcCount[s]||0)+1; });
+    });
+
+    if (Object.keys(srcCount).length === 0) {
+        bar.innerHTML = '<span class="no-tags-msg">Aucune source dans les données</span>';
+        return;
+    }
+
+    const SOURCE_PALETTE = [
+        { bg:'rgba(167,139,250,0.18)', col:'#a78bfa' },
+        { bg:'rgba(96,165,250,0.18)',  col:'#60a5fa' },
+        { bg:'rgba(52,211,153,0.18)',  col:'#34d399' },
+        { bg:'rgba(251,146,60,0.18)',  col:'#fb923c' },
+        { bg:'rgba(244,114,182,0.18)', col:'#f472b6' },
+        { bg:'rgba(56,189,248,0.18)',  col:'#38bdf8' },
+        { bg:'rgba(251,191,36,0.18)',  col:'#fbbf24' },
+        { bg:'rgba(248,113,113,0.18)', col:'#f87171' },
+    ];
+    const srcColor = i => SOURCE_PALETTE[i % SOURCE_PALETTE.length];
+
+    const mkBtn = (label, src, c, badge) => {
+        const b = document.createElement('button');
+        b.className   = 'flt-btn' + (src === null ? ' flt-active' : '');
+        b.style.cssText = `--fb:${c.bg};--fc:${c.col}`;
+        b.dataset.src = src || '';
+        b.innerHTML = `${label}${badge ? `<span class="flt-badge">${badge.toLocaleString()}</span>` : ''}`;
+        b.onclick = () => {
+            document.querySelectorAll('#cveSourceFilterBar .flt-btn').forEach(x => x.classList.remove('flt-active'));
+            b.classList.add('flt-active');
+            G_activeCveSource = src;
+            G_cvePage = 0;
+            applyCveFilters();
         };
         return b;
     };
@@ -469,6 +522,8 @@ function renderCVETable() {
         const yr  = (cve.cve_id||'').split('-')[1]||'N/A';
         const sev = cve.severity || 'N/A';
         const sc  = sevClass(sev);
+        const scoop = cve.score != null ? cve.score.toFixed(1) : 'N/A';
+        const scc = scoreClass(cve.score);
         const src = Array.isArray(cve.sources) ? cve.sources.join(', ') : 'N/A';
         const dt  = cve.published_date ? fmtDate(cve.published_date) : 'N/A';
         return `<tr onclick="openCVEModal(${i})">
@@ -476,6 +531,7 @@ function renderCVETable() {
             <td style="color:#a78bfa;font-weight:600;font-family:monospace">${esc(cve.cve_id||'N/A')}</td>
             <td>${yr}</td>
             <td><span class="sev-pill ${sc}">${sev}</span></td>
+            <td><span class="score-pill ${scc}">${scoop}</span></td>
             <td style="color:#94a3b8;font-size:0.74rem">${esc(src)}</td>
             <td style="color:#94a3b8;font-size:0.74rem">${dt}</td>
         </tr>`;
@@ -485,6 +541,11 @@ function renderCVETable() {
 function applyCveFilters() {
     const q = document.getElementById('cveSearch').value.toLowerCase().trim();
     G_filteredCves = G_allCves.filter(c => {
+        // source filter
+        if (G_activeCveSource !== null) {
+            if (!Array.isArray(c.sources) || !c.sources.includes(G_activeCveSource)) return false;
+        }
+
         if (!q) return true;
         return (c.cve_id   || '').toLowerCase().includes(q) ||
                (c.severity || '').toLowerCase().includes(q) ||
@@ -545,6 +606,8 @@ function openCVEModal(i) {
     const ctx   = Array.isArray(cve.contexts) ? cve.contexts : [];
     const sev   = cve.severity||'N/A';
     const sc    = sevClass(sev);
+    const score = cve.score != null ? cve.score.toFixed(1) : 'N/A';
+    const scc   = scoreClass(cve.score);
 
     const renderCvssEntry = e => {
         if (typeof e !== 'object') return `<span>${esc(String(e))}</span>`;
@@ -558,10 +621,22 @@ function openCVEModal(i) {
     };
 
     body.innerHTML = `
-      <div class="dr">
-        <div class="dl">CVE Identifiant</div>
-        <div style="color:#a78bfa;font-weight:700;font-size:1.4rem;font-family:monospace">${esc(cve.cve_id||'N/A')}</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.5rem">
+        <div>
+          <div class="dl">CVE Identifiant</div>
+          <div style="color:#a78bfa;font-weight:700;font-size:1.6rem;font-family:monospace">${esc(cve.cve_id||'N/A')}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="dl">CVSS Score</div>
+          <div class="score-pill ${scc}" style="font-size:1.5rem; padding:.4rem .8rem">${score}</div>
+        </div>
       </div>
+
+      <div class="dr">
+         <div class="dl">Description</div>
+         <div class="description-box">${esc(cve.description || 'Aucune description disponible pour cette vulnérabilité.')}</div>
+      </div>
+
       <div class="dg4">
         <div class="dr"><div class="dl">Sévérité</div>
           <span class="sev-pill ${sc}" style="font-size:0.9rem">${sev}</span></div>
@@ -570,16 +645,19 @@ function openCVEModal(i) {
         <div class="dr"><div class="dl">Publication</div>
           <div style="font-size:0.85rem">${cve.published_date ? fmtDate(cve.published_date) : 'N/A'}</div></div>
       </div>
+
       <div class="dr">
         <div class="dl">Sources</div>
         <div>${src.length ? src.map(s=>`<span class="src-pill">${esc(s)}</span>`).join('') : '<span style="color:#475569">N/A</span>'}</div>
       </div>
+
       <div class="dr">
-        <div class="dl">Scores CVSS</div>
+        <div class="dl">Détails CVSS</div>
         <div>${cvss.length ? cvss.map(renderCvssEntry).join('') : '<span style="color:#475569">Pas de CVSS</span>'}</div>
       </div>
+
       <div class="dr">
-        <div class="dl">Contextes</div>
+        <div class="dl">Contextes (Auto-extraction)</div>
         <div>${ctx.length ? ctx.map(renderCtx).join('') : '<span style="color:#475569">Pas de contexte</span>'}</div>
       </div>`;
 
@@ -653,4 +731,13 @@ function sevClass(s) {
     if (u==='MEDIUM')   return 'sev-m';
     if (u==='LOW')      return 'sev-l';
     return 'sev-n';
+}
+
+function scoreClass(s) {
+    const n = parseFloat(s);
+    if (isNaN(n) || n === 0) return 'sc-n';
+    if (n >= 9.0) return 'sc-c';
+    if (n >= 7.0) return 'sc-h';
+    if (n >= 4.0) return 'sc-m';
+    return 'sc-l';
 }

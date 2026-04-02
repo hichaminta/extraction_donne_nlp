@@ -10,6 +10,7 @@ import logging
 import copy
 from typing import Any
 from functools import lru_cache
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -19,7 +20,7 @@ NLP_RESERVED_SOURCES = {"dgssi", "otx alienvault", "pulsedive"}
 # Patterns regex
 _IPV4_BASE = r"(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)"
 _IP_WITH_PORT = re.compile(f"\\b({_IPV4_BASE})(?::([0-9]{{1,5}}))?\\b")
-_URL = re.compile(r"https?://[^\s\"'<>\]\[}{|\\^`]+|ftp://[^\s\"'<>\]\[}{|\\^`]+")
+_URL = re.compile(r"(?:https?|ftp)://[^\s\"'<>\]\[}{|\\^`]{3,}")
 _DOMAIN = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|gov|edu|mil|int|info|biz|mobi|name|museum|co|de|fr|uk|us|ru|cn|jp|br|in|ma|eu|be|nl|es|it|pl|se|ch|au|ca|nz|sg|hk|za|ar|mx|tr|ua|ro|cz|hu|gr|fi|no|dk|pt|at|onion|xyz|top|app|dev|cloud|site|tech|club|shop|online|pro|click|stream|zip|mov|review|cc|pw|me|top|icu|bit|info|live|bid)\b", re.IGNORECASE)
 _EMAIL = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
 _MD5 = re.compile(r"\b[0-9a-fA-F]{32}\b")
@@ -54,6 +55,39 @@ class RegexExtractor:
 
         def _add(v, t, p=None):
             v_s = v.strip()
+            
+            # Filtrage des faux positifs (localhost, loopback, generic placeholders)
+            v_low = v_s.lower()
+            if v_low in ("localhost", "127.0.0.1", "127.1", "0.0.0.0"): return
+            
+            if "://" in v_low:
+                try:
+                    v_s = v_s.rstrip(").,")
+                    parsed = urlparse(v_s)
+                    host = (parsed.hostname or "").lower()
+                    
+                    # 1. Host vide ou local
+                    if not host or host in ("localhost", "127.0.0.1", "127.1", "0.0.0.0", "::1"):
+                        return
+                    
+                    # 2. Placeholders génériques communs dans les bulletins (NVD/DGSSI)
+                    if host in ("x.x.x.x", "intranet-ip", "domain", "example.com", "example.org", "server.com"):
+                        return
+                    if "%" in host: # Placeholders comme %humbug-URL%
+                        return
+                        
+                    # 3. Hostnames internes (pas de point et pas une IP numérique)
+                    # ex: 'http://gpu', 'http://server'
+                    if "." not in host and not host.replace(".", "").isnumeric():
+                        return
+                        
+                    # 4. URLs malformées (ex: 'http://:80')
+                    if host.startswith(":"):
+                        return
+                        
+                except Exception:
+                    pass
+
             if t == "domain": v_s = v_s.lower()
             
             # Gestion fusion ports pour IP
@@ -83,11 +117,19 @@ class RegexExtractor:
                 port_part = m.group(2)
                 _add(ip_part, "ip", port_part)
         if len(text) >= 32:
-            for m in _SHA256.finditer(text): _add(m.group(), "sha256")
+            # On évite d'extraire des hashes s'ils font partie d'une URL déjà trouvée
+            excluded_vals = [f["value"] for f in found if f["ioc_type"] in ("url", "email")]
+            for m in _SHA256.finditer(text):
+                v = m.group()
+                if not any(v in fv for fv in excluded_vals): _add(v, "sha256")
             for m in _SHA1.finditer(text):
-                if (m.group(), "sha256") not in seen: _add(m.group(), "sha1")
+                v = m.group()
+                if (v, "sha256") not in seen and not any(v in fv for fv in excluded_vals):
+                    _add(v, "sha1")
             for m in _MD5.finditer(text):
-                if (m.group(), "sha256") not in seen and (m.group(), "sha1") not in seen: _add(m.group(), "md5")
+                v = m.group()
+                if (v, "sha256") not in seen and (v, "sha1") not in seen and not any(v in fv for fv in excluded_vals):
+                    _add(v, "md5")
         if "." in text:
             for m in _DOMAIN.finditer(text):
                 v = m.group()
